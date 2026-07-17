@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>COSMOS — WebXR Universe Explorer</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <!-- WebGL / XR canvas mount -->
+  <div id="app"></div>
+
+  <!-- Desktop HUD overlay -->
+  <div id="hud" class="hidden">
+    <div id="hud-top-left">
+      <div id="hud-speed">
+        <div class="hud-label">VELOCITY</div>
+        <div id="speed-value">0 m/s</div>
+        <div id="speed-sub">stationary</div>
+      </div>
+      <div id="hud-mode">DESKTOP</div>
+    </div>
+    <div id="hud-top-right">
+      <button class="hud-btn" id="btn-help" title="Controls (H)">?</button>
+      <button class="hud-btn" id="btn-destinations" title="Destinations (D)">✦</button>
+      <button class="hud-btn" id="btn-layers" title="Layers (L)">☰</button>
+      <button class="hud-btn" id="btn-settings" title="Settings">⚙</button>
+      <button class="hud-btn" id="btn-mute" title="Mute (M)">♪</button>
+      <button class="hud-btn hidden" id="btn-exit-xr" title="Exit immersive session">✕</button>
+    </div>
+    <div id="hud-target" class="hidden">
+      <div class="hud-label">TARGET</div>
+      <div id="target-name">—</div>
+      <div id="target-info"></div>
+      <div id="target-actions">
+        <button id="btn-jump" class="action-btn">JUMP <span class="key">J</span></button>
+        <button id="btn-clear-target" class="action-btn secondary">CLEAR</button>
+      </div>
+    </div>
+    <div id="jump-progress" class="hidden"><div id="jump-progress-fill"></div></div>
+    <div id="reticle"></div>
+    <div id="hud-hint"></div>
+
+    <!-- Panels -->
+    <div id="panel-help" class="panel hidden">
+      <h2>Controls &amp; Gestures</h2>
+      <div class="panel-cols">
+        <div>
+          <h3>Desktop</h3>
+          <table>
+            <tr><td class="key">Click</td><td>Capture mouse (pointer lock)</td></tr>
+            <tr><td class="key">Mouse</td><td>Look</td></tr>
+            <tr><td class="key">W A S D</td><td>Translate</td></tr>
+            <tr><td class="key">Q / E</td><td>Down / Up</td></tr>
+            <tr><td class="key">Shift</td><td>Thrust boost</td></tr>
+            <tr><td class="key">Space</td><td>Brake</td></tr>
+            <tr><td class="key">Scroll</td><td>Adjust max speed (log)</td></tr>
+            <tr><td class="key">Click object</td><td>Select target</td></tr>
+            <tr><td class="key">J (hold)</td><td>Charge &amp; jump to target</td></tr>
+            <tr><td class="key">O</td><td>Toggle orbits</td></tr>
+            <tr><td class="key">N</td><td>Toggle labels</td></tr>
+            <tr><td class="key">D</td><td>Destinations</td></tr>
+            <tr><td class="key">L</td><td>Layers</td></tr>
+            <tr><td class="key">M</td><td>Mute</td></tr>
+            <tr><td class="key">H / Esc</td><td>This help / close</td></tr>
+          </table>
+        </div>
+        <div>
+          <h3>XR Controllers</h3>
+          <table>
+            <tr><td class="key">Right stick</td><td>Smooth turn (snap in settings)</td></tr>
+            <tr><td class="key">Left stick</td><td>Translate / strafe</td></tr>
+            <tr><td class="key">Right trigger</td><td>Thrust</td></tr>
+            <tr><td class="key">Left trigger</td><td>Brake</td></tr>
+            <tr><td class="key">A</td><td>Select object under ray</td></tr>
+            <tr><td class="key">B</td><td>Jump to selected</td></tr>
+            <tr><td class="key">X</td><td>Toggle labels</td></tr>
+            <tr><td class="key">Y</td><td>Toggle orbits</td></tr>
+            <tr><td class="key">Grip + pull</td><td>Grab &amp; drag the universe</td></tr>
+            <tr><td class="key">Left wrist</td><td>Wrist panel (look at it)</td></tr>
+          </table>
+          <h3>Hand Tracking</h3>
+          <table>
+            <tr><td class="key">Pinch</td><td>Ray select</td></tr>
+            <tr><td class="key">Two-hand pinch pull</td><td>Fly (pull space toward you)</td></tr>
+            <tr><td class="key">Open palm push</td><td>Gentle brake</td></tr>
+            <tr><td class="key">Pinch wrist button</td><td>Toggle HUD buttons</td></tr>
+          </table>
+        </div>
+      </div>
+      <p class="dim">Comfort: vignette during high speed (VR default ON) · snap/smooth turn · seated/standing — see ⚙ Settings.</p>
+      <button class="close-btn" data-close="panel-help">Close</button>
+    </div>
+
+    <div id="panel-destinations" class="panel hidden">
+      <h2>Destinations</h2>
+      <div id="destinations-list"></div>
+      <button class="close-btn" data-close="panel-destinations">Close</button>
+    </div>
+
+    <div id="panel-layers" class="panel hidden">
+      <h2>Layers</h2>
+      <div id="layers-list"></div>
+      <button class="close-btn" data-close="panel-layers">Close</button>
+    </div>
+
+    <div id="panel-settings" class="panel hidden">
+      <h2>Settings</h2>
+      <div id="settings-list"></div>
+      <button class="close-btn" data-close="panel-settings">Close</button>
+    </div>
+  </div>
+
+  <!-- Landing / mode select screen -->
+  <div id="landing">
+    <div class="stars-bg"></div>
+    <div class="landing-inner">
+      <h1 class="title">C&nbsp;O&nbsp;S&nbsp;M&nbsp;O&nbsp;S</h1>
+      <p class="subtitle">A WebXR universe-exploration engine built on real astronomy data</p>
+
+      <div id="dataset-line" class="dataset-line">loading datasets…</div>
+
+      <div class="mode-buttons">
+        <button id="mode-desktop" class="mode-btn">
+          <span class="mode-icon">🖥</span>
+          <span class="mode-name">Desktop</span>
+          <span class="mode-desc">Mouse + keyboard, full navigation</span>
+        </button>
+        <button id="mode-vr" class="mode-btn">
+          <span class="mode-icon">🥽</span>
+          <span class="mode-name">VR</span>
+          <span class="mode-desc">Immersive VR · Quest 3 optimized</span>
+          <span class="mode-status" id="vr-status">checking…</span>
+        </button>
+        <button id="mode-ar" class="mode-btn">
+          <span class="mode-icon">◐</span>
+          <span class="mode-name">Passthrough AR</span>
+          <span class="mode-desc">Universe blended into your room</span>
+          <span class="mode-status" id="ar-status">checking…</span>
+        </button>
+      </div>
+
+      <div class="landing-footer">
+        <button id="landing-settings" class="text-btn">⚙ Settings</button>
+        <button id="landing-help" class="text-btn">? Controls &amp; Gestures</button>
+      </div>
+
+      <p class="provenance" id="provenance">
+        Star data: HYG 4.0 / Gaia DR3 · Exoplanets: NASA Exoplanet Archive · DSOs: OpenNGC ·
+        Sky: ESA/Gaia DPAC (CC BY-SA 3.0 IGO) · Textures: Solar System Scope (CC BY 4.0)
+      </p>
+    </div>
+  </div>
+
+  <div id="loading-overlay">
+    <div class="loader-ring"></div>
+    <div id="loading-text">Loading the universe…</div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

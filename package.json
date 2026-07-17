@@ -1,0 +1,24 @@
+{
+  "name": "cosmos-webxr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WebXR universe exploration app with real astronomy data (Quest 3 / desktop / passthrough AR)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "fetch-data": "node scripts/fetch-data.mjs",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name cosmos-webxr"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "troika-three-text": "^0.52.4"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

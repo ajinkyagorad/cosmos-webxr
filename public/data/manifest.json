@@ -1,0 +1,126 @@
+{
+  "generated": "2026-07-17",
+  "note": "All datasets are real, fetched from the sources below or documented well-known catalog values. Fallbacks are explicitly marked.",
+  "datasets": [
+    {
+      "name": "Stars (HYG v4.0, Gaia-derived)",
+      "source": "AstroNexus HYG-Database v4.0",
+      "url": "https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v40.csv.gz",
+      "retrieved": "2026-07-17",
+      "count": 70659,
+      "namedStars": 400,
+      "filter": "dist <= 500 pc AND mag <= 9, OR mag <= 6.5 (naked eye) at any distance",
+      "sizeBytes": 1413180,
+      "license": "HYG database: public domain / CC-BY-SA 4.0 per repo README"
+    },
+    {
+      "name": "Exoplanets (confirmed, default parameter set)",
+      "source": "NASA Exoplanet Archive \u00e2\u20ac\u201d Planetary Systems (ps) table",
+      "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select%20pl_name%2Chostname%2Cra%2Cdec%2Csy_dist%2Cdisc_year%2Cdiscoverymethod%2Cpl_rade%2Cpl_bmasse%2Cpl_orbper%2Cst_spectype%20from%20ps%20where%20default_flag%3D1&format=csv",
+      "retrieved": "2026-07-17",
+      "count": 6197,
+      "sizeBytes": 914854,
+      "license": "NASA Exoplanet Archive: public data, cite archive"
+    },
+    {
+      "name": "Deep-sky objects",
+      "source": "OpenNGC (mattiaverga/OpenNGC)",
+      "url": "https://raw.githubusercontent.com/mattiaverga/OpenNGC/master/database_files/NGC.csv",
+      "retrieved": "2026-07-17",
+      "count": 10640,
+      "distances": "Curated published distances for well-known objects; others null",
+      "sizeBytes": 1027712,
+      "license": "OpenNGC: CC BY-SA 4.0"
+    },
+    {
+      "name": "Milky Way backdrop: ESA/Gaia DR2 all-sky, equirectangular 2000x1000 (ESA/Gaia/DPAC, CC BY-SA 3.0 IGO)",
+      "url": "https://sci.esa.int/documents/33580/35361/1567215018748-ESA_Gaia_DR2_AllSky_Brightness_Colour_Cartesian_2000x1000.png/57e638f3-d489-2e0f-fe39-73d952b5b8d3?version=1.0&t=1567215037506&download=true",
+      "retrieved": "2026-07-17",
+      "sizeBytes": 2139546,
+      "license": "ESA/Gaia/DPAC \u00e2\u20ac\u201d CC BY-SA 3.0 IGO",
+      "status": "fetched",
+      "file": "public/textures/milkyway.png"
+    },
+    {
+      "name": "Solar system body textures (2k)",
+      "source": "Solar System Scope textures",
+      "url": "https://www.solarsystemscope.com/textures/download/",
+      "retrieved": "2026-07-17",
+      "count": 13,
+      "fetched": [
+        {
+          "file": "2k_sun.jpg",
+          "sizeBytes": 822427
+        },
+        {
+          "file": "2k_mercury.jpg",
+          "sizeBytes": 872555
+        },
+        {
+          "file": "2k_venus_surface.jpg",
+          "sizeBytes": 885075
+        },
+        {
+          "file": "2k_earth_daymap.jpg",
+          "sizeBytes": 463087
+        },
+        {
+          "file": "2k_earth_normal_map.tif",
+          "sizeBytes": 521376,
+          "converted": "2k_earth_normal_map.png"
+        },
+        {
+          "file": "2k_earth_nightmap.jpg",
+          "sizeBytes": 255287
+        },
+        {
+          "file": "2k_moon.jpg",
+          "sizeBytes": 1053869
+        },
+        {
+          "file": "2k_mars.jpg",
+          "sizeBytes": 750547
+        },
+        {
+          "file": "2k_jupiter.jpg",
+          "sizeBytes": 498976
+        },
+        {
+          "file": "2k_saturn.jpg",
+          "sizeBytes": 199916
+        },
+        {
+          "file": "2k_saturn_ring_alpha.png",
+          "sizeBytes": 12119
+        },
+        {
+          "file": "2k_uranus.jpg",
+          "sizeBytes": 77751
+        },
+        {
+          "file": "2k_neptune.jpg",
+          "sizeBytes": 241580
+        }
+      ],
+      "failed": [],
+      "license": "Solar System Scope \u00e2\u20ac\u201d CC BY 4.0 (https://www.solarsystemscope.com/textures/)",
+      "note": " 2k_earth_normal_map.tif converted in-repo to 2k_earth_normal_map.png (browsers cannot decode TIF); original kept on disk."
+    },
+    {
+      "name": "Space missions/probes (curated)",
+      "source": "NASA/ESA published mission data (curated)",
+      "url": null,
+      "retrieved": "2026-07-17",
+      "count": 20,
+      "license": "NASA/ESA public information"
+    },
+    {
+      "name": "Black holes / neutron stars (curated)",
+      "source": "Published literature values (curated)",
+      "url": null,
+      "retrieved": "2026-07-17",
+      "count": 13,
+      "license": "Public astronomical data"
+    }
+  ]
+}
