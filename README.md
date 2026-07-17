@@ -1,5 +1,8 @@
 # COSMOS — WebXR Universe Explorer
 
+**Live: [https://cosmos-webxr.pages.dev](https://cosmos-webxr.pages.dev)** — open on desktop, or in
+the Meta Quest 3 browser for VR / passthrough AR.
+
 A production-quality universe-exploration web app for **Meta Quest 3 (VR)**, **desktop**, and
 **passthrough AR**, built on **real astronomy data** — no fabricated coordinates anywhere in the
 real layers.
