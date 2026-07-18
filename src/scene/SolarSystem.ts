@@ -11,7 +11,7 @@ import {
   planetEclipticAU, planetOrbitEclipticAU, moonEclipticEarthRadii, planetNodeAxisEcliptic,
   centuriesSinceJ2000, ECLIPTIC_TO_EQUATORIAL_Q,
 } from "../data/ephemeris";
-import { loadTextureWithFallback, proceduralPlanetTexture } from "../util/textures";
+import { planetTexture, type TextureKind } from "../util/textureCache";
 import { settings, TIME_RATES } from "../ui/Settings";
 import { esc } from "../util/astro";
 import type { Selectable } from "./Selection";
@@ -75,10 +75,28 @@ export class SolarSystem implements Updatable {
 
   private texDir = "/textures/planets/";
 
+  /** Every texture this system uses — preloaded at boot (#43). */
+  textureManifest(): { url: string; hue: number; kind?: TextureKind }[] {
+    const defs: { url: string; hue: number; kind?: TextureKind }[] = [
+      { url: this.texDir + SUN.texture, hue: SUN.fallbackHue },
+    ];
+    for (const def of PLANETS) {
+      defs.push({ url: this.texDir + def.texture, hue: def.fallbackHue });
+      if (def.bump) defs.push({ url: this.texDir + def.bump, hue: def.fallbackHue, kind: "data" });
+      if (def.night) defs.push({ url: this.texDir + def.night, hue: 0.6 });
+      if (def.ring) defs.push({ url: this.texDir + def.ring.texture, hue: 0.1 });
+      for (const m of def.moons ?? []) {
+        defs.push({ url: this.texDir + m.texture, hue: 0.1 });
+        defs.push({ url: this.texDir + m.texture, hue: 0.1, kind: "data" });
+      }
+    }
+    return defs;
+  }
+
   private buildSun() {
-    const tex = loadTextureWithFallback(this.texDir + SUN.texture, () => proceduralPlanetTexture(SUN.fallbackHue));
+    const tex = planetTexture(this.texDir + SUN.texture, SUN.fallbackHue);
     const r = this.sunRadiusWorld();
-    const mat = new THREE.MeshBasicMaterial({ map: tex });
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: false, opacity: 1 });
     this.sun = new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat);
     this.sun.name = "Sun";
     this.group.add(this.sun);
@@ -102,15 +120,15 @@ export class SolarSystem implements Updatable {
     const tiltGroup = new THREE.Group();
     root.add(tiltGroup);
 
-    const tex = loadTextureWithFallback(this.texDir + def.texture, () => proceduralPlanetTexture(def.fallbackHue));
+    const tex = planetTexture(this.texDir + def.texture, def.fallbackHue);
     let mesh: THREE.Mesh;
     if (def.name === "Earth") {
       mesh = this.buildEarth(tex, def);
     } else {
-      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 });
+      // Explicitly opaque: a planet must never render transparent (#44).
+      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0, transparent: false, opacity: 1 });
       if (def.bump) {
-        mat.bumpMap = loadTextureWithFallback(this.texDir + def.bump, () => proceduralPlanetTexture(def.fallbackHue));
-        (mat.bumpMap as THREE.Texture).colorSpace = THREE.NoColorSpace;
+        mat.bumpMap = planetTexture(this.texDir + def.bump, def.fallbackHue, "data");
       }
       mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 28), mat);
     }
@@ -119,7 +137,7 @@ export class SolarSystem implements Updatable {
 
     // Saturn's ring (real inner/outer radii).
     if (def.ring) {
-      const ringTex = loadTextureWithFallback(this.texDir + def.ring.texture, () => proceduralPlanetTexture(0.1));
+      const ringTex = planetTexture(this.texDir + def.ring.texture, 0.1);
       const inner = def.ring.innerKm / def.radiusKm;
       const outer = def.ring.outerKm / def.radiusKm;
       const ringGeo = new THREE.RingGeometry(inner, outer, 96, 1);
@@ -160,10 +178,9 @@ export class SolarSystem implements Updatable {
     // distance compressed only for readability (never inside the planet mesh).
     if (def.moons) {
       for (const m of def.moons) {
-        const moonTex = loadTextureWithFallback(this.texDir + m.texture, () => proceduralPlanetTexture(0.1));
-        const moonMat = new THREE.MeshStandardMaterial({ map: moonTex, roughness: 1, metalness: 0 });
-        moonMat.bumpMap = moonTex;
-        (moonMat.bumpMap as THREE.Texture).colorSpace = THREE.NoColorSpace;
+        const moonTex = planetTexture(this.texDir + m.texture, 0.1);
+        const moonMat = new THREE.MeshStandardMaterial({ map: moonTex, roughness: 1, metalness: 0, transparent: false, opacity: 1 });
+        moonMat.bumpMap = planetTexture(this.texDir + m.texture, 0.1, "data");
         const moonMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), moonMat);
         moonMesh.name = m.name;
         root.add(moonMesh);
@@ -176,7 +193,7 @@ export class SolarSystem implements Updatable {
 
   /** Earth: custom day/night mixing shader (night lights appear on the dark side). */
   private buildEarth(dayTex: THREE.Texture, def: PlanetDef): THREE.Mesh {
-    const nightTex = loadTextureWithFallback(this.texDir + (def.night ?? ""), () => proceduralPlanetTexture(0.6));
+    const nightTex = planetTexture(this.texDir + (def.night ?? ""), 0.6);
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         uDay: { value: dayTex },
@@ -319,14 +336,21 @@ export class SolarSystem implements Updatable {
       p.mesh.rotation.y += p.spinRate * dt * this.timeRate;
     }
 
-    // Moon: real geocentric direction (ecliptic → equatorial); distance compressed
-    // to ≥ 6 parent radii so it never hides inside the exaggerated planet mesh.
+    // Moon: real geocentric direction (ecliptic → equatorial). Distance is the real
+    // 384,400 km (scaled like the orbits), floored ONLY by surface clearance of the
+    // exaggerated planet + moon meshes — previously floored at 6 parent radii, which
+    // with the 800× planet-size exaggeration flung the Moon ~80× too far out.
+    // The mesh is a CHILD of the planet root, so its local position is just dir×dist —
+    // adding parent.root.position here double-counted Earth's orbit and parked the
+    // Moon at ~2 AU (#45).
     moonEclipticEarthRadii(this.simMs, _dir);
     _dir.applyQuaternion(ECLIPTIC_TO_EQUATORIAL_Q).normalize();
     for (const m of this.moonNodes) {
       const realDist = (384400 / KM_PER_AU) * WORLD_PER_AU * ex;
-      const dist = Math.max(realDist, 6 * m.parent.radiusWorld);
-      m.mesh.position.copy(m.parent.root.position).addScaledVector(_dir, dist);
+      const moonR = m.mesh.scale.x; // rendered radius (size-exaggerated like the planets)
+      const clearance = (m.parent.radiusWorld + moonR) * 1.25;
+      const dist = Math.max(realDist, clearance);
+      m.mesh.position.copy(_dir).multiplyScalar(dist);
     }
 
     // Orbit lines follow the slowly-changing elements (rebuild at most every 20 sim-days).

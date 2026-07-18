@@ -28,20 +28,22 @@ const TYPE_DEFAULT_SIZE_PC: Record<string, number> = {
 export class DSOLayer {
   points: THREE.Points;
   objects: DSO[] = [];
-  positions: THREE.Vector3[] = [];
+  /** Universe position per object index; null when the object has no real distance (#38). */
+  positions: (THREE.Vector3 | null)[] = [];
   sizes: number[] = [];
   /** Resolved distance in light-years per object (catalog or curated table), null = unknown. */
   distLy: (number | null)[] = [];
+  /** Objects dropped from rendering because no real distance is known. */
+  droppedNoDistance = 0;
 
   constructor(data: DSOData) {
     const objs = data.objects;
-    const N = objs.length;
     this.objects = objs;
-    const pos = new Float32Array(N * 3);
-    const col = new Float32Array(N * 3);
-    const size = new Float32Array(N);
-    const type = new Float32Array(N);
-    const seed = new Float32Array(N);
+    const pos: number[] = [];
+    const col: number[] = [];
+    const size: number[] = [];
+    const type: number[] = [];
+    const seed: number[] = [];
     const v = new THREE.Vector3();
     objs.forEach((o, i) => {
       // Distance: catalog value first, then the curated Messier/NGC table (C12).
@@ -49,29 +51,40 @@ export class DSOLayer {
       // missed almost everything — normalize before lookup.
       const dly = o.d ?? DSO_DISTANCE_LY[normalizeDSOKey(o.n)] ?? null;
       this.distLy.push(dly);
-      const dpc = dly != null ? dly / PC_TO_LY : 50000; // unknown distance → far-field 50 kpc
+      // #38: NEVER place an object at a fake constant radius. OpenNGC is
+      // direction-only for most entries; rendering them on a 50 kpc shell made
+      // the whole catalog look equidistant. Objects without a real distance
+      // (catalog, curated table, or the 2MRS cross-match in dso.json) are not
+      // rendered at all.
+      if (dly == null) {
+        this.positions.push(null);
+        this.sizes.push(0);
+        this.droppedNoDistance++;
+        return;
+      }
+      const dpc = dly / PC_TO_LY;
       radecToVec(o.ra, o.dec, dpc, v);
       this.positions.push(v.clone());
-      pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+      pos.push(v.x, v.y, v.z);
       const c = TYPE_COLORS[o.t] ?? TYPE_COLORS.other;
       const dim = o.m !== null ? THREE.MathUtils.clamp(1.3 - o.m / 18, 0.25, 1.15) : 0.6;
-      col[i * 3] = c.r * dim; col[i * 3 + 1] = c.g * dim; col[i * 3 + 2] = c.b * dim;
+      col.push(c.r * dim, c.g * dim, c.b * dim);
       let sizePc = TYPE_DEFAULT_SIZE_PC[o.t] ?? 4;
-      if (dly != null && o.s) {
+      if (o.s) {
         // Real angular size at real distance → physical size.
         sizePc = Math.max(2 * dpc * Math.tan(((o.s / 60) * Math.PI) / 360), sizePc * 0.3);
       }
       this.sizes.push(sizePc);
-      size[i] = sizePc;
-      type[i] = TYPE_CODE[o.t] ?? 6;
-      seed[i] = Math.random() * 100;
+      size.push(sizePc);
+      type.push(TYPE_CODE[o.t] ?? 6);
+      seed.push(Math.random() * 100);
     });
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("aColor", new THREE.BufferAttribute(col, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
-    geo.setAttribute("aType", new THREE.BufferAttribute(type, 1));
-    geo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
+    geo.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(col), 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array(size), 1));
+    geo.setAttribute("aType", new THREE.BufferAttribute(new Float32Array(type), 1));
+    geo.setAttribute("aSeed", new THREE.BufferAttribute(new Float32Array(seed), 1));
     const mat = new THREE.ShaderMaterial({
       uniforms: { uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) }, uTime: { value: 0 } },
       vertexShader: /* glsl */ `
@@ -165,11 +178,13 @@ export class DSOLayer {
     const out: Selectable[] = [];
     this.objects.forEach((o, i) => {
       if (!o.cn && !o.n.startsWith("M")) return;
+      const p = this.positions[i];
+      if (!p) return; // no real distance → not in the cloud (#38)
       out.push({
         id: `dso-${i}`,
         name: o.cn ? `${o.n} (${o.cn})` : o.n,
         kind: "dso",
-        position: this.positions[i],
+        position: p,
         // sizes are physical diameters → true radius, so go-to framing (C8) is correct
         radiusWorld: Math.max(this.sizes[i] / 2, 0.25),
         describe: () => describeDSO(o, this.distLy[i]),

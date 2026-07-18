@@ -30,6 +30,7 @@ import { AudioEngine } from "./audio/AudioEngine";
 import { HUD } from "./ui/HUD";
 import { WristPanel } from "./ui/WristPanel";
 import { Landing } from "./ui/Landing";
+import { preloadPlanetTextures } from "./util/textureCache";
 import { formatDistancePC, PC_TO_LY } from "./util/astro";
 import { GALACTIC_CENTER_PC } from "./scene/MilkyWay";
 
@@ -40,7 +41,16 @@ async function boot() {
   const audio = new AudioEngine();
 
   // ---------- load real datasets ----------
-  const data = await loadAllData((msg) => { $("loading-text").textContent = msg; });
+  const dataPromise = loadAllData((msg) => { $("loading-text").textContent = msg; });
+
+  // #43: warm the planet-texture cache in parallel with the data fetch, with real
+  // per-file progress on the landing screen (textures swap in live; planets are
+  // always solid procedural until their 2k image arrives).
+  const texSolarProbe = new SolarSystem(app);
+  const texPreload = preloadPlanetTextures(texSolarProbe.textureManifest(),
+    (d, t) => { $("loading-text").textContent = `Planet textures ${d}/${t}…`; });
+
+  const data = await dataPromise;
 
   // ---------- scene layers ----------
   $("loading-text").textContent = "Building the universe…";
@@ -48,7 +58,7 @@ async function boot() {
   app.universe.add(milkyWay.group);
   app.addUpdatable(milkyWay);
 
-  const solar = new SolarSystem(app);
+  const solar = texSolarProbe; // textures already in flight from the boot preload
   app.universe.add(solar.group);
   app.addUpdatable(solar);
 
@@ -148,8 +158,10 @@ async function boot() {
   });
   data.dso.objects.forEach((o, i) => {
     if (!o.cn) return; // only objects with common names
+    const p = dso.positions[i];
+    if (!p) return; // no real distance → not rendered (#38)
     const anchor = new THREE.Object3D();
-    anchor.position.copy(dso.positions[i]);
+    anchor.position.copy(p);
     app.universe.add(anchor);
     labelQueue.push(labels.add(o.cn, anchor, { size: 2.0, color: "#b0ffc8" }));
   });
@@ -183,6 +195,20 @@ async function boot() {
       anchor.position.set(g.pos[0], g.pos[1], g.pos[2]);
       app.universe.add(anchor);
       labelQueue.push(labels.add(g.name, anchor, { size: 25, color: "#d8c9ff", minLog: -7.3, maxLog: -3.0 }));
+    }
+    // #39: every other named LVDB galaxy within 3 Mpc gets a smaller dim label,
+    // nearest 150 only, so the nearby catalog population is actually identifiable.
+    const near = localGroup.galaxies
+      .filter((g) => !MAJORS.includes(g.name))
+      .map((g) => ({ g, d: Math.hypot(g.pos[0], g.pos[1], g.pos[2]) }))
+      .filter((e) => e.d < 3e6)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 150);
+    for (const { g } of near) {
+      const anchor = new THREE.Object3D();
+      anchor.position.set(g.pos[0], g.pos[1], g.pos[2]);
+      app.universe.add(anchor);
+      labelQueue.push(labels.add(g.name, anchor, { size: 15, color: "#a894d8", minLog: -7.3, maxLog: -3.4 }));
     }
   }
   // Cosmology labels (D13/D14).
@@ -522,6 +548,7 @@ async function boot() {
   });
 
   // ---------- landing / modes ----------
+  await texPreload; // textures warm before the mode picker appears (#43)
   const landing = new Landing(app);
   await landing.init(data.manifest, {
     stars: data.stars.meta.count,
