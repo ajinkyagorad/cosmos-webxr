@@ -1,6 +1,6 @@
 {
   "name": "cosmos-webxr",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "WebXR universe exploration app with real astronomy data (Quest 3 / desktop / passthrough AR)",

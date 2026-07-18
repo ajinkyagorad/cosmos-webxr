@@ -52,6 +52,7 @@ npm run fetch-data        # core catalogs + textures into public/data + public/t
 npm run fetch-extra       # atlas layers: cepheids, globulars, galaxies, star names, constellations, landmarks
 npm run fetch-cmb         # WMAP 9yr CMB map → reproject Mollweide→equirect → public/textures/cmb.jpg
 npm run fetch-2mrs        # 2MRS redshift catalog (VizieR TSV) → public/data/2mrs.bin
+python scripts/match_dso_2mrs.py   # cross-match OpenNGC galaxies ↔ 2MRS → real distances in dso.json
 python scripts/fetch_dust.py   # 3D dust volume (msgpack → dust.bin, needs: pip install msgpack)
 node scripts/fetch-data.mjs stars,exoplanets   # or just some steps
 ```
@@ -65,8 +66,8 @@ for every dataset, including any fallbacks that were used.
 |---|---|---|---|
 | Stars | [HYG Database v4.0](https://github.com/astronexus/HYG-Database) (Gaia-derived) | **70,659** | Filter: `dist ≤ 500 pc AND mag ≤ 9`, OR `mag ≤ 6.5` naked-eye. Interleaved Float32 `[x,y,z(pc), mag, B−V]` J2000; 400 brightest named stars labeled. |
 | Exoplanets | [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu/) TAP `ps` (default_flag=1) | **6,197** | Full confirmed-planet default parameter set with discovery method, radius/mass, period, host spectral type. |
-| Deep-sky objects | [OpenNGC](https://github.com/mattiaverga/OpenNGC) | **10,640** | NGC/IC + Messier, mag ≤ 15. Distances: catalog value first, else curated table of **all 110 Messier + ~100 famous NGC/IC** (SEDS/SIMBAD published values, `src/data/dsoDistances.ts`; normalized-name runtime join — catalog names are zero-padded). Objects without a published distance show none — never fabricated. |
-| CMB shell | [NASA/WMAP 9-year ILC map](https://commons.wikimedia.org/wiki/File:WMAP_2012.png) (via Wikimedia) | 2048×1024 JPG | Mollweide 4096×2048 reprojected to equirectangular offline (`scripts/fetch_cmb.py`, magic bytes verified), mounted at **46.5 Gly comoving**. Fades in only at intergalactic zoom (log ≲ −1.5); never occludes. The sci.esa.int Planck equirect JPEG was removed from scicms (404), so WMAP 9yr is the reachable real map; procedural 2.725 K speckle fallback if the file is missing. |
+| Deep-sky objects | [OpenNGC](https://github.com/mattiaverga/OpenNGC) | **10,640** cataloged, **6,875 placed** | NGC/IC + Messier, mag ≤ 15. Distances: catalog value first, then the **2MRS redshift cross-match** (`scripts/match_dso_2mrs.py` — 6,745 galaxies, 1.5′ tolerance, median separation 0.002′), then a curated table of **all 110 Messier + ~100 famous NGC/IC** (SEDS/SIMBAD published values, `src/data/dsoDistances.ts`). Objects without ANY published distance are **not rendered** — never placed at a fake constant radius. |
+| CMB shell | [NASA/WMAP 9-year ILC map](https://commons.wikimedia.org/wiki/File:WMAP_2012.png) (via Wikimedia) | 2048×1024 JPG | Mollweide 4096×2048 reprojected to equirectangular offline (`scripts/fetch_cmb.py`, magic bytes verified), mounted at **46.5 Gly comoving**. Off by default; when enabled it fades in only in the deep intergalactic void (>~0.2 Gpc from the Sun AND intergalactic zoom); never occludes. The sci.esa.int Planck equirect JPEG was removed from scicms (404), so WMAP 9yr is the reachable real map; procedural 2.725 K speckle fallback if the file is missing. |
 | 2MRS galaxies | [2MRS (Huchra+ 2012)](https://cdsarc.cds.unistra.fr/viz-bin/cat/J/ApJS/199/26) via VizieR TSV | **42,724** | Redshift distances cz/H0 (H0 = 70), 0.5–300 Mpc; peculiar velocities make individual cz distances approximate inside ~30 Mpc. Marker size/brightness from distance + K-band magnitude. |
 | 3D dust volume | [Leike & Enßlin / Lallement Gaia 3D dust maps](https://github.com/sb2580/k3d_dust) (k3d snapshot) | **81×201×201 voxels** (3.27 MB bin) | Raymarched extinction cube, ±1000 pc (x,y) / ±400 pc (z), galactic frame → equatorial at load. |
 | Cepheids | [Skowron+2019 galactic Cepheids](https://github.com/jskowron/galactic_cepheids) | **2,214** | Young-disk map; heliocentric galactic XYZ → equatorial pc, Float32 `[x,y,z, period]`. |
@@ -83,11 +84,11 @@ for every dataset, including any fallbacks that were used.
 
 Total committed data: **≈ 18 MB** (7.4 MB catalogs + 10 MB textures, well under the 40 MB budget).
 
-**Scale audit (museum solar system).** Planet/star positions are real (ephemeris → `WORLD_PER_AU = 0.02` world units per AU); body SIZES are exaggerated for visibility (Sun ×15, planets ×800) — positions real, sizes didactic, documented in `SolarSystem.ts`. Interstellar distances are exact catalog parsecs: Proxima Centauri at 1.302 pc ≈ 268 k AU. Moon distance compressed to ≥ 6 Earth radii visual so it stays selectable.
+**Scale audit (museum solar system).** Planet/star positions are real (ephemeris → `WORLD_PER_AU = 0.02` world units per AU); body SIZES are exaggerated for visibility (Sun ×15, planets ×800) — positions real, sizes didactic, documented in `SolarSystem.ts`. Interstellar distances are exact catalog parsecs: Proxima Centauri at 1.302 pc ≈ 268 k AU. The Moon rides at its real 384,400 km from Earth, floored only by surface clearance against the exaggerated planet meshes.
 
 **Galactic model.** Spiral arms follow the published log-spiral fit (pitch 12.8°, Vallée/Reid): two major arms (Scutum–Centaurus, Perseus), minor arms (Sagittarius–Carina, Norma–Outer) and the Orion–Cygnus spur — the Sun sits on the spur at 8.15 kpc by construction. Arms are labeled at galactic zoom. The **dark matter halo** is an NFW model (r_s = 20 kpc, r_vir ≈ 200 kpc, ~10¹² M☉) raymarched as a faint blue-violet shell, visible from outside ~20 kpc. **Dark energy** has no map (it is uniform, ≈68% of the energy density) — it appears as an info destination framing the observable universe instead.
 
-**Go-to framing & visibility aids.** Jumps arrive so the target subtends ~30° apparent diameter using its REAL radius (points get a fixed sensible distance). The **galaxy boost** (default ON) gives Local Group galaxies a shader size/brightness floor plus auto-labels for the majors (M31, M33, LMC, SMC, M 32, NGC 205, IC 10). The **coordinate grid** (default OFF) auto-switches bands: AU rings in the ecliptic plane at solar zoom → light-year rings around the Sun → kpc rings around the true galactic center. **Travel trails** (default ON) leave a fading, speed-colored ribbon of the actual flight path. **Hover labels** (default ON) pop an info chip after ~0.4 s of pointer dwell. Enabling the **cinematic layer** also switches the UI accent theme to a red-orange hot gradient (reverts when off).
+**Go-to framing & visibility aids.** Jumps arrive so the target subtends ~30° apparent diameter using its REAL radius (points get a fixed sensible distance). The **galaxy boost** (default ON) gives Local Group galaxies a shader size/brightness floor plus auto-labels for the majors (M31, M33, LMC, SMC, M 32, NGC 205, IC 10) and every other named LVDB galaxy within 3 Mpc. The **coordinate grid** (default OFF) comes in three styles — Cartesian lattice, spherical shells, cylindrical rings — and auto-switches bands: AU in the ecliptic plane at solar zoom → light-years around the Sun → kpc around the true galactic center. **Distance dimming** (settings) offers None / Realistic (physical 1/d² flux from 10 pc) / Artificial falloff across the point layers. **Travel trails** (default ON) draw a fine speed-colored line of go-to warp journeys only — free flight leaves no trail. **Hover labels** (default ON) pop an info chip after ~0.4 s of pointer dwell; the chip persists until you look >30° away or dwell elsewhere. Zoom rate grows with distance from home (up to 4×) so the Local Group is seconds away. Enabling the **cinematic layer** also switches the UI accent theme to a red-orange hot gradient (reverts when off).
 
 The **Cinematic universes** layer (off by default) is the only fictional content: a segregated
 far-offset region of stylized worlds, clearly marked `✦ … (fiction)` in UI, destinations, and
@@ -105,13 +106,13 @@ src/
     AtlasLayers.ts       Dust volume raymarcher, cepheid/globular points, Local Group sprites, constellations, 2MRS
     CMBLayer.ts          WMAP 9yr CMB on a 46.5 Gly shell (fades in at intergalactic zoom)
     DarkHaloLayer.ts     NFW dark-matter halo raymarch around the galactic center
-    CoordinateGrid.ts    AU/ly/kpc cylindrical grid, auto-switched by zoom band
-    TravelTrails.ts      Fading speed-colored ribbon of the actual flight path
+    CoordinateGrid.ts    Cartesian / spherical / cylindrical grids, auto-switched by zoom band
+    TravelTrails.ts      Fine speed-colored lines of go-to warp journeys only
     HoverChip.ts         Pointer-dwell info chip (constant angular size)
     StarNames.ts         Ray-hover proper-name tags for 460 named stars
     SolarSystem.ts       Live JPL ephemeris positions, textured planets, real tilts, Saturn ring, Moon
     Exoplanets.ts        Points colored by discovery method
-    DSOLayer.ts          10k DSOs: per-type procedural shaders (galaxy/nebula/PN/OC/GCl/SNR)
+    DSOLayer.ts          Placed DSOs: per-type procedural shaders incl. seeded galaxy morphologies
     CompactObjects.ts    Accretion-disk shader (BHs), rotating beams (pulsars) at real coords
     Missions.ts          Probes parented to real host bodies / heliocentric positions
     CinematicLayer.ts    Fictional overlay (segregated, off by default)
@@ -129,6 +130,7 @@ scripts/fetch-extra.mjs  Atlas data pipeline (cepheids/globulars/galaxies/names/
 scripts/fetch_dust.py    Dust volume pipeline (msgpack → Float32 dust.bin + meta)
 scripts/fetch_cmb.py     WMAP CMB pipeline (Mollweide → equirectangular cmb.jpg)
 scripts/fetch_2mrs.py    2MRS pipeline (VizieR TSV → Float32 2mrs.bin + meta)
+scripts/match_dso_2mrs.py OpenNGC ↔ 2MRS angular cross-match → real galaxy distances in dso.json
 scripts/nav-test.mjs     Pure-math tests of the navigation model (npm run test:nav)
 scripts/smoke-test.mjs   CDP-driven headless render/interaction/jump test
 ```
@@ -216,7 +218,7 @@ on an object raises its hover label (toggle in LAYERS).
 ### Hand tracking (degrades gracefully to controllers)
 | Gesture | Action |
 |---|---|
-| Aim | Visible hand models; wrist→middle-MCP ray with laser + cursor dot and angular magnetism |
+| Aim | Real WebXR hand models (mesh, low-poly fallback); wrist→middle-MCP ray with one amber laser + cursor dot and angular magnetism |
 | Pinch (hold) | Grab the universe 1:1 and drag it |
 | Two pinches | Stretch to scale · twist to yaw |
 | Tap-pinch | Select under cursor / press panel button |

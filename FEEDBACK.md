@@ -48,32 +48,32 @@ added at the bottom; nothing is removed. Status tags: ✅ done · 🚧 in progre
 ## Round 4 — fourth field test (2026-07-18, voice notes)
 
 ### Interaction & Input
-32. ⬜ Hand tracking renders as black spheres ("blobs") — show properly rendered hands (WebXR hand models).
-33. ⬜ Hand tracking emits TWO rays from one hand — must be a single pointing ray, consistent with controller behavior. (Controller ray is fine, steady, single.)
-34. ⬜ Pointer ray needs a distinct color/style to stand out from environmental lines.
-35. ⬜ Dashboard hover causes CONTINUOUS controller vibration — must be a single tactile pulse per button hover (battery drain).
+32. ✅ Hand tracking renders as black spheres ("blobs") — show properly rendered hands (WebXR hand models).
+33. ✅ Hand tracking emits TWO rays from one hand — must be a single pointing ray, consistent with controller behavior. (Controller ray is fine, steady, single.)
+34. ✅ Pointer ray needs a distinct color/style to stand out from environmental lines.
+35. ✅ Dashboard hover causes CONTINUOUS controller vibration — must be a single tactile pulse per button hover (battery drain).
 
 ### Dashboard & UI
-36. ⬜ Buttons are flat 2D — make volumetric "soft cuboid" buttons: depth, curved/rounded edges, stylish (not classic boxes). Dashboard itself could have depth.
-37. ⬜ Coordinate control should be a segmented 3-column button: Cartesian / Spherical / Cylindrical. Grid must render correctly at all zoom scales (cylindrical missing at some scales).
+36. ✅ Buttons are flat 2D — make volumetric "soft cuboid" buttons: depth, curved/rounded edges, stylish (not classic boxes). Dashboard itself could have depth.
+37. ✅ Coordinate control should be a segmented 3-column button: Cartesian / Spherical / Cylindrical. Grid must render correctly at all zoom scales (cylindrical missing at some scales).
 
 ### Astronomical Data & Environment
-38. ⬜ Near Local Group, deep-sky "stars" (galaxies) appear EQUIDISTANT on a constant-radius sphere — radial distances wrong/ignored; fix projection.
-39. ⬜ Missing labels for nearby cataloged galaxies.
-40. ⬜ Zoom too slow at extreme distances — optimize rapid scale transitions.
-41. ⬜ CMB shell visible at close range — distracting; should auto-activate only at large scales (or be off by default) and hide near objects.
+38. ✅ Near Local Group, deep-sky "stars" (galaxies) appear EQUIDISTANT on a constant-radius sphere — radial distances wrong/ignored; fix projection.
+39. ✅ Missing labels for nearby cataloged galaxies.
+40. ✅ Zoom too slow at extreme distances — optimize rapid scale transitions.
+41. ✅ CMB shell visible at close range — distracting; should auto-activate only at large scales (or be off by default) and hide near objects.
 42. ⬜ Fictional planets (e.g. Tatooine) positional accuracy noted as placeholder; future: map against established coordinates.
-43. ⬜ Planet textures slow to load — pre-load locally and cache (few planets; reusable structures).
-44. ⬜ Planets stay transparent/unrendered even after texture load.
-45. ⬜ Moon not shown properly relative to Earth — improper positions (exaggeration mismatch).
-46. ⬜ Raycast fails to select a planet even when the ray is inside its radius.
-47. ⬜ Movement trails track the HEAD; should trace object-A → object-B trajectory only (go-to journeys, not local movement); too thick → fine line; color-scale by speed along the path.
-48. ⬜ Destinations lack data-source attribution — group destinations by catalog/provider.
-49. ⬜ SDSS/2MRS rendering appears as a non-planar "5x5 grid" of squares — verify spatial accuracy.
-50. ⬜ "Enable info" toggle for objects; exoplanet/star metadata panels (temperature, classification, surface/ground type).
-51. ⬜ Info panel disappears when user moves slightly — persist while object remains centered/focused.
-52. ⬜ Distance dimming — three modes: (1) None (current), (2) Realistic (physical magnitude — very faint), (3) Artificial (enhanced dimming with distance, e.g. galaxies).
-53. ⬜ Catalog galaxies lack visual depth — procedurally generate per-type visuals (spiral/elliptical/lenticular/irregular) with pseudo-random seeded params when approached/selected (no per-galaxy hand-authoring).
+43. ✅ Planet textures slow to load — pre-load locally and cache (few planets; reusable structures).
+44. ✅ Planets stay transparent/unrendered even after texture load.
+45. ✅ Moon not shown properly relative to Earth — improper positions (exaggeration mismatch).
+46. ✅ Raycast fails to select a planet even when the ray is inside its radius.
+47. ✅ Movement trails track the HEAD; should trace object-A → object-B trajectory only (go-to journeys, not local movement); too thick → fine line; color-scale by speed along the path.
+48. ✅ Destinations lack data-source attribution — group destinations by catalog/provider.
+49. ✅ SDSS/2MRS rendering appears as a non-planar "5x5 grid" of squares — verify spatial accuracy.
+50. ✅ "Enable info" toggle for objects; exoplanet/star metadata panels (temperature, classification, surface/ground type).
+51. ✅ Info panel disappears when user moves slightly — persist while object remains centered/focused.
+52. ✅ Distance dimming — three modes: (1) None (current), (2) Realistic (physical magnitude — very faint), (3) Artificial (enhanced dimming with distance, e.g. galaxies).
+53. ✅ Catalog galaxies lack visual depth — procedurally generate per-type visuals (spiral/elliptical/lenticular/irregular) with pseudo-random seeded params when approached/selected (no per-galaxy hand-authoring).
 
 ### Process
-54. ⬜ Keep a changelog; versionize releases (v1.0 not yet reached).
+54. ✅ Keep a changelog; versionize releases (v1.0 not yet reached).
