@@ -523,6 +523,19 @@ async function boot() {
     update() { grid.update(nav.logScale, settings.get("orbitExaggeration"), settings.get("gridMode")); },
   });
 
+  // #52: distance dimming — push camera universe position + mode to point layers.
+  const _dimCam = new THREE.Vector3();
+  app.addUpdatable({
+    update() {
+      const mode = settings.get("distanceDimming");
+      nav.universePos(_dimCam);
+      starField?.setDimming(_dimCam, mode);
+      dso.setDimming(_dimCam, mode);
+      localGroup?.setDimming(_dimCam, mode);
+      twoMRS?.setDimming(_dimCam, mode);
+    },
+  });
+
   // ---------- comfort vignette + per-frame misc ----------
   app.addUpdatable({
     update(dt: number) {

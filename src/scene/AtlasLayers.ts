@@ -124,14 +124,28 @@ export class DustVolume {
 
 function sizedPointsMaterial(maxPx: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    uniforms: { uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) } },
+    uniforms: {
+      uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uCamUni: { value: new THREE.Vector3() },  // camera, universe-local pc (#52)
+      uDimMode: { value: 0 },                   // 0 none · 1 realistic · 2 artificial
+      uDimD0: { value: 1e6 },                   // per-layer reference distance (pc)
+    },
     vertexShader: /* glsl */ `
       attribute vec3 aColor;
       attribute float aSize;
       uniform float uPixelRatio;
+      uniform vec3 uCamUni;
+      uniform float uDimMode;
+      uniform float uDimD0;
       varying vec3 vColor;
+      float dimFactor(vec3 pos) {
+        if (uDimMode < 0.5) return 1.0;
+        float d = max(length(pos - uCamUni), 1e-6);
+        if (uDimMode < 1.5) return clamp((uDimD0 / d) * (uDimD0 / d), 0.02, 1.0);
+        return 1.0 / (1.0 + pow(d / uDimD0, 1.5));
+      }
       void main() {
-        vColor = aColor;
+        vColor = aColor * dimFactor(position);
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
         float px = aSize * mscale * uPixelRatio * (700.0 / max(-mv.z, 0.001));
@@ -268,12 +282,22 @@ export class LocalGroupLayer {
     geo.setAttribute("gcol", new THREE.BufferAttribute(lcol, 3));
     // Oriented core+envelope sprites (Milky Way Atlas shader — sizes are real half-light radii).
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uBright: { value: 1 }, uMinPx: { value: 2 }, uProjH: { value: 700 }, uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) }, uBoost: { value: 1 } },
+      uniforms: {
+        uBright: { value: 1 }, uMinPx: { value: 2 }, uProjH: { value: 700 }, uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) }, uBoost: { value: 1 },
+        uCamUni: { value: new THREE.Vector3() }, uDimMode: { value: 0 }, uDimD0: { value: 1e6 }, // #52
+      },
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       vertexShader: /* glsl */ `
         attribute float psize; attribute float alp; attribute float ell; attribute float ang; attribute vec3 gcol;
         varying float vA; varying float vE; varying float vAng; varying vec3 vCol;
         uniform float uProjH, uBright, uMinPx, uPixelRatio, uBoost;
+        uniform vec3 uCamUni; uniform float uDimMode, uDimD0;
+        float dimFactor(vec3 pos) {
+          if (uDimMode < 0.5) return 1.0;
+          float d = max(length(pos - uCamUni), 1e-6);
+          if (uDimMode < 1.5) return clamp((uDimD0 / d) * (uDimD0 / d), 0.02, 1.0);
+          return 1.0 / (1.0 + pow(d / uDimD0, 1.5));
+        }
         void main(){
           vec4 mv = modelViewMatrix * vec4(position,1.0);
           float d = max(-mv.z, 1e-6);
@@ -282,6 +306,7 @@ export class LocalGroupLayer {
           px = max(px, uBoost * 7.0 * uPixelRatio);          // galaxy boost: visibility floor
           vA = clamp(alp * uBright * clamp(px/2.0, 0.3, 1.4), 0.0, 1.0);
           vA = max(vA, uBoost * 0.30);                       // boost: brightness floor
+          vA *= dimFactor(position);                         // #52 distance dimming
           vE = ell; vAng = ang; vCol = gcol;
           gl_PointSize = clamp(px*1.6, uMinPx, 500.0);
           gl_Position = projectionMatrix * mv;
@@ -308,6 +333,13 @@ export class LocalGroupLayer {
   /** Galaxy boost (C11): distance-compensated brightness/size floor so majors never vanish. */
   setBoost(on: boolean): void {
     ((this.points.material as THREE.ShaderMaterial).uniforms.uBoost as { value: number }).value = on ? 1 : 0;
+  }
+
+  /** #52: distance dimming — camera position (universe-local pc) + mode 0/1/2. */
+  setDimming(camUni: THREE.Vector3, mode: number): void {
+    const u = (this.points.material as THREE.ShaderMaterial).uniforms;
+    (u.uCamUni.value as THREE.Vector3).copy(camUni);
+    u.uDimMode.value = mode;
   }
 
   toSelectables(): Selectable[] {
@@ -392,8 +424,16 @@ export class TwoMRSLayer {
     geo.setAttribute("aColor", new THREE.BufferAttribute(col, 3));
     geo.setAttribute("aSize", new THREE.BufferAttribute(siz, 1));
     this.points = new THREE.Points(geo, sizedPointsMaterial(14));
+    (this.points.material as THREE.ShaderMaterial).uniforms.uDimD0.value = 5e7; // #52 ref: 50 Mpc
     this.points.frustumCulled = false;
     void meta;
+  }
+
+  /** #52: distance dimming — camera position (universe-local pc) + mode 0/1/2. */
+  setDimming(camUni: THREE.Vector3, mode: number): void {
+    const u = (this.points.material as THREE.ShaderMaterial).uniforms;
+    (u.uCamUni.value as THREE.Vector3).copy(camUni);
+    u.uDimMode.value = mode;
   }
 
   toSelectables(): Selectable[] {

@@ -31,6 +31,9 @@ export class StarField implements Updatable {
         uTime: { value: 0 },
         uScale: { value: 1.0 },      // global size multiplier
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        uCamUni: { value: new THREE.Vector3() },  // camera, universe-local pc (#52)
+        uDimMode: { value: 0 },      // 0 none · 1 realistic (1/d²) · 2 artificial
+        uDimD0: { value: 10 },       // reference distance (pc): 10 pc = absolute magnitude
       },
       vertexShader: /* glsl */ `
         attribute float aMag;
@@ -39,10 +42,19 @@ export class StarField implements Updatable {
         uniform float uTime;
         uniform float uScale;
         uniform float uPixelRatio;
+        uniform vec3 uCamUni;
+        uniform float uDimMode;
+        uniform float uDimD0;
         varying vec3 vColor;
         varying float vTwinkle;
+        float dimFactor(vec3 pos) {
+          if (uDimMode < 0.5) return 1.0;
+          float d = max(length(pos - uCamUni), 1e-6);
+          if (uDimMode < 1.5) return clamp((uDimD0 / d) * (uDimD0 / d), 0.02, 1.0); // physical flux
+          return 1.0 / (1.0 + pow(d / uDimD0, 1.5)); // enhanced but readable
+        }
         void main() {
-          vColor = aColor;
+          vColor = aColor * dimFactor(position);
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           // Magnitude → world size (brighter = bigger), gentle curve.
           float sizeWorld = 0.35 * exp(-0.32 * aMag) * uScale;
@@ -81,5 +93,11 @@ export class StarField implements Updatable {
 
   update(_dt: number, t: number) {
     this.material.uniforms.uTime.value = t;
+  }
+
+  /** #52: distance dimming — camera position (universe-local pc) + mode 0/1/2. */
+  setDimming(camUni: THREE.Vector3, mode: number) {
+    this.material.uniforms.uCamUni.value.copy(camUni);
+    this.material.uniforms.uDimMode.value = mode;
   }
 }
