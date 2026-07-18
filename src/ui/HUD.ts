@@ -125,6 +125,11 @@ export class HUD {
     const host = $("layers-list");
     const layers: { key: keyof SettingsState; label: string }[] = [
       { key: "layerStars", label: "Stars (HYG / Gaia)" },
+      { key: "layerDust", label: "3D dust volume (Leike/Lallement)" },
+      { key: "layerCepheids", label: "Cepheids — disk map (Skowron+2019)" },
+      { key: "layerGlobulars", label: "Globular clusters (Harris/LVDB)" },
+      { key: "layerGalaxies", label: "Local Group galaxies (LVDB)" },
+      { key: "layerConstellations", label: "Constellation figures" },
       { key: "layerExoplanets", label: "Exoplanets (NASA Archive)" },
       { key: "layerDSO", label: "Deep-sky objects (OpenNGC)" },
       { key: "layerMissions", label: "Missions & probes" },
@@ -132,6 +137,7 @@ export class HUD {
       { key: "layerSkybox", label: "Sky backdrop (Gaia all-sky)" },
       { key: "layerCinematic", label: "✦ Cinematic universes (fiction)" },
       { key: "labels", label: "Labels" },
+      { key: "starNames", label: "Star names on hover" },
       { key: "orbits", label: "Orbit lines" },
     ];
     host.innerHTML = "";

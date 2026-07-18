@@ -1,0 +1,6 @@
+{
+  "count": 2214,
+  "layout": "interleaved-float32 [x,y,z (pc, equatorial J2000), ageMyr]",
+  "source": "Skowron+2019 OGLE classical Cepheids (galactic_cepheids Data_Table_1)",
+  "note": "Columns l,b,D(pc) converted galactic→equatorial J2000; 4th value = age (Myr) per reference pipeline"
+}

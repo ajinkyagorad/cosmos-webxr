@@ -15,7 +15,7 @@
     },
     {
       "name": "Exoplanets (confirmed, default parameter set)",
-      "source": "NASA Exoplanet Archive \u00e2\u20ac\u201d Planetary Systems (ps) table",
+      "source": "NASA Exoplanet Archive â€” Planetary Systems (ps) table",
       "url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select%20pl_name%2Chostname%2Cra%2Cdec%2Csy_dist%2Cdisc_year%2Cdiscoverymethod%2Cpl_rade%2Cpl_bmasse%2Cpl_orbper%2Cst_spectype%20from%20ps%20where%20default_flag%3D1&format=csv",
       "retrieved": "2026-07-17",
       "count": 6197,
@@ -37,7 +37,7 @@
       "url": "https://sci.esa.int/documents/33580/35361/1567215018748-ESA_Gaia_DR2_AllSky_Brightness_Colour_Cartesian_2000x1000.png/57e638f3-d489-2e0f-fe39-73d952b5b8d3?version=1.0&t=1567215037506&download=true",
       "retrieved": "2026-07-17",
       "sizeBytes": 2139546,
-      "license": "ESA/Gaia/DPAC \u00e2\u20ac\u201d CC BY-SA 3.0 IGO",
+      "license": "ESA/Gaia/DPAC â€” CC BY-SA 3.0 IGO",
       "status": "fetched",
       "file": "public/textures/milkyway.png"
     },
@@ -103,7 +103,7 @@
         }
       ],
       "failed": [],
-      "license": "Solar System Scope \u00e2\u20ac\u201d CC BY 4.0 (https://www.solarsystemscope.com/textures/)",
+      "license": "Solar System Scope â€” CC BY 4.0 (https://www.solarsystemscope.com/textures/)",
       "note": " 2k_earth_normal_map.tif converted in-repo to 2k_earth_normal_map.png (browsers cannot decode TIF); original kept on disk."
     },
     {
@@ -121,6 +121,71 @@
       "retrieved": "2026-07-17",
       "count": 13,
       "license": "Public astronomical data"
+    },
+    {
+      "name": "Cepheids (Skowron+2019 disk map)",
+      "source": "jskowron/galactic_cepheids Data_Table_1",
+      "url": "https://raw.githubusercontent.com/jskowron/galactic_cepheids/master/data/Data_Table_1.dat",
+      "retrieved": "2026-07-18",
+      "count": 2214,
+      "sizeBytes": 35424,
+      "license": "Skowron et al. 2019, Science 365, 478 — cite the paper"
+    },
+    {
+      "name": "Globular clusters (Harris + LVDB)",
+      "source": "apace7/local_volume_database",
+      "url": "https://raw.githubusercontent.com/apace7/local_volume_database/main/data/gc_harris.csv",
+      "retrieved": "2026-07-18",
+      "count": 213,
+      "sizeBytes": 3408,
+      "license": "LVDB: CC0 / cite Pace+2022; Harris 1996 (2010 ed.)"
+    },
+    {
+      "name": "Local Group / Local Volume galaxies (LVDB + M31/M33)",
+      "source": "apace7/local_volume_database",
+      "url": "https://raw.githubusercontent.com/apace7/local_volume_database/main/data/dwarf_mw.csv",
+      "retrieved": "2026-07-18",
+      "count": 911,
+      "sizeBytes": 149646,
+      "license": "LVDB: CC0 / cite Pace+2022"
+    },
+    {
+      "name": "Proper-named stars (HYG v4.1, ≤1400 pc)",
+      "source": "AstroNexus HYG-Database v4.1",
+      "url": "https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v41.csv",
+      "retrieved": "2026-07-18",
+      "count": 460,
+      "sizeBytes": 22975,
+      "license": "HYG database: public domain / CC-BY-SA 4.0 per repo README"
+    },
+    {
+      "name": "Constellation figures (Stellarium modern skyculture + HYG)",
+      "source": "Stellarium skycultures/modern",
+      "url": "https://raw.githubusercontent.com/Stellarium/stellarium/master/skycultures/modern/index.json",
+      "retrieved": "2026-07-18",
+      "count": 679,
+      "constellations": 88,
+      "sizeBytes": 33709,
+      "license": "Stellarium sky cultures: GPL-compatible / CC BY-SA; line work © Stellarium contributors"
+    },
+    {
+      "name": "Landmarks (local clouds / Milky Way / Local Group)",
+      "source": "Published (l,b,d) positions + LVDB (see extract_data.py provenance)",
+      "url": null,
+      "retrieved": "2026-07-18",
+      "count": 29,
+      "sizeBytes": 3787,
+      "license": "Public astronomical data"
+    },
+    {
+      "name": "3D dust volume (Leike/Lallement Gaia maps)",
+      "source": "Leike & Ensslin / Lallement 3D dust maps (via sb2580/k3d_dust k3d snapshot)",
+      "url": "https://raw.githubusercontent.com/sb2580/k3d_dust/main/index.html",
+      "retrieved": "2026-07-18",
+      "count": 3272481,
+      "sizeBytes": 3272481,
+      "note": "uint8 log-encoded density cube kept in galactic Cartesian; mounted under a rotated group in-app",
+      "license": "Leike & Ensslin 2020 / Lallement et al. dust maps — cite the underlying papers"
     }
   ]
 }

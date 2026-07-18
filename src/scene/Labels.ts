@@ -1,5 +1,9 @@
 // In-world labels via troika-three-text (crisp SDF text). Falls back to canvas sprites
 // if troika fails to initialize for any reason.
+// Labels live at SCENE level (world space, metres) — they follow their anchor's world
+// position and keep a constant angular size, independent of the universe log scale.
+// Each label can declare a zoom window [minLog, maxLog] so e.g. planet names only
+// appear at solar-system zoom and constellation names only at star-field zoom.
 import * as THREE from "three";
 import type { Updatable, App } from "../core/App";
 import { settings } from "../ui/Settings";
@@ -9,6 +13,9 @@ interface LabelEntry {
   object: THREE.Object3D;
   node: THREE.Object3D;
   baseSize: number;
+  minLog: number;
+  maxLog: number;
+  when?: () => boolean;
 }
 
 export class LabelManager implements Updatable {
@@ -21,12 +28,17 @@ export class LabelManager implements Updatable {
   constructor(app: App) {
     this.app = app;
     this.group.name = "labels";
+    this.app.scene.add(this.group); // world space — rides the stationary user frame
   }
 
   get object() { return this.group; }
 
-  /** Add a text label following `object`. baseSize = world height of text at creation scale. */
-  async add(name: string, object: THREE.Object3D, opts: { size?: number; color?: string; offsetY?: number } = {}) {
+  /** Add a text label following `object`. size = text height as a fraction of view
+   *  distance (×1000, i.e. legacy baseSize units); minLog/maxLog = zoom window;
+   *  when = optional extra visibility predicate (e.g. layer toggle). */
+  async add(name: string, object: THREE.Object3D, opts: {
+    size?: number; color?: string; minLog?: number; maxLog?: number; when?: () => boolean;
+  } = {}) {
     const size = opts.size ?? 0.06;
     let node: THREE.Object3D;
     try {
@@ -46,10 +58,13 @@ export class LabelManager implements Updatable {
       console.warn("troika-three-text unavailable, using canvas sprite for", name, e);
       node = this.canvasSprite(name, opts.color ?? "#cfe2ff");
     }
-    node.visible = settings.get("labels");
+    node.visible = false;
     this.group.add(node);
-    this.labels.push({ name, object, node, baseSize: size });
-    void (opts.offsetY ?? 0);
+    this.labels.push({
+      name, object, node, baseSize: size,
+      minLog: opts.minLog ?? -Infinity, maxLog: opts.maxLog ?? Infinity,
+      when: opts.when,
+    });
   }
 
   private canvasSprite(text: string, color: string): THREE.Sprite {
@@ -70,26 +85,31 @@ export class LabelManager implements Updatable {
   }
 
   setVisible(v: boolean) {
-    for (const l of this.labels) l.node.visible = v;
+    if (!v) for (const l of this.labels) l.node.visible = false;
   }
 
   update(_dt: number, _t: number) {
-    if (!settings.get("labels")) return;
+    if (!settings.get("labels")) {
+      if (this.labels.some((l) => l.node.visible)) for (const l of this.labels) l.node.visible = false;
+      return;
+    }
+    const logScale = Math.log10(Math.max(this.app.universe.scale.x, 1e-12));
     this.app.camera.getWorldPosition(this.camPos);
-    this.app.universe.updateMatrixWorld(false);
+    const camQ = this.app.camera.getWorldQuaternion(new THREE.Quaternion());
     for (const l of this.labels) {
+      const inWindow = logScale >= l.minLog && logScale <= l.maxLog && (l.when?.() ?? true);
+      if (!inWindow) {
+        if (l.node.visible) l.node.visible = false;
+        continue;
+      }
       l.object.getWorldPosition(this.objPos);
-      // Convert world → universe-local so labels ride the floating origin correctly
-      // (label group is parented to the universe).
-      l.node.position.copy(this.group.worldToLocal(this.objPos.clone()));
+      l.node.position.copy(this.objPos);
       const dist = this.objPos.distanceTo(this.camPos);
-      // Pure distance-proportional sizing: labels keep a constant angular size and never
-      // blow up at close range. Capped for extremely far labels.
+      // Constant angular size (~3.5% of view distance), capped for extreme distances.
       const s = THREE.MathUtils.clamp(dist * 0.035, 1e-6, l.baseSize * 600);
       l.node.scale.setScalar(s);
-      l.node.quaternion.copy(this.app.camera.getWorldQuaternion(new THREE.Quaternion()));
-      // Hide labels that are absurdly far relative to their context.
-      l.node.visible = settings.get("labels");
+      l.node.quaternion.copy(camQ);
+      l.node.visible = true;
     }
   }
 }

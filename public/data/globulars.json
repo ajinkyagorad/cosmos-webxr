@@ -1,0 +1,5 @@
+{
+  "count": 213,
+  "layout": "interleaved-float32 [x,y,z (pc, equatorial J2000), M_V]",
+  "source": "Harris catalog + LVDB (gc_harris.csv, gc_mw_new.csv)"
+}

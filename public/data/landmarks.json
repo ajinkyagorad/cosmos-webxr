@@ -1,0 +1,301 @@
+{
+ "fields": {
+  "name": "landmark",
+  "pos": "[x,y,z] pc equatorial J2000",
+  "desc": "subtitle",
+  "cat": "cloud|mw|lg"
+ },
+ "count": 29,
+ "landmarks": [
+  {
+   "name": "Sun",
+   "pos": [
+    0,
+    0,
+    0
+   ],
+   "desc": "You are here",
+   "cat": "cloud"
+  },
+  {
+   "name": "Orion complex",
+   "pos": [
+    42,
+    410.2,
+    -37.6
+   ],
+   "desc": "M42 · Horsehead · Flame — 1350 ly",
+   "cat": "cloud"
+  },
+  {
+   "name": "Taurus clouds",
+   "pos": [
+    48.1,
+    115.8,
+    62.3
+   ],
+   "desc": "Nearest large star-forming cloud",
+   "cat": "cloud"
+  },
+  {
+   "name": "Ophiuchus",
+   "pos": [
+    -50.9,
+    -116.9,
+    -57.8
+   ],
+   "desc": "Rho Oph dark clouds",
+   "cat": "cloud"
+  },
+  {
+   "name": "Perseus clouds",
+   "pos": [
+    153.4,
+    205.3,
+    156
+   ],
+   "desc": "NGC 1333 · IC 348",
+   "cat": "cloud"
+  },
+  {
+   "name": "California Neb.",
+   "pos": [
+    186.2,
+    326.7,
+    281.9
+   ],
+   "desc": "NGC 1499 hydrogen cloud",
+   "cat": "cloud"
+  },
+  {
+   "name": "Cepheus clouds",
+   "pos": [
+    84.7,
+    -58.3,
+    334.6
+   ],
+   "desc": "Cepheus flare region",
+   "cat": "cloud"
+  },
+  {
+   "name": "Chamaeleon",
+   "pos": [
+    -35.7,
+    0.9,
+    -176.4
+   ],
+   "desc": "Southern dark clouds",
+   "cat": "cloud"
+  },
+  {
+   "name": "Aquila Rift",
+   "pos": [
+    34.5,
+    -247.3,
+    -13.1
+   ],
+   "desc": "Great Rift dust lane",
+   "cat": "cloud"
+  },
+  {
+   "name": "Sgr A*",
+   "pos": [
+    -436.6,
+    -7140.2,
+    -3963.2
+   ],
+   "desc": "Galactic centre · 26,700 ly",
+   "cat": "mw"
+  },
+  {
+   "name": "Sun + local clouds",
+   "pos": [
+    0,
+    0,
+    0
+   ],
+   "desc": "The 2 kpc dust cube sits here",
+   "cat": "mw"
+  },
+  {
+   "name": "47 Tucanae",
+   "pos": [
+    1383.2,
+    146,
+    -4301.4
+   ],
+   "desc": "",
+   "cat": "mw"
+  },
+  {
+   "name": "Omega Centauri",
+   "pos": [
+    -3406.7,
+    -1355.5,
+    -3998.4
+   ],
+   "desc": "Brightest globular cluster",
+   "cat": "mw"
+  },
+  {
+   "name": "M4",
+   "pos": [
+    -676.3,
+    -1511.7,
+    -826.6
+   ],
+   "desc": "Nearest globular",
+   "cat": "mw"
+  },
+  {
+   "name": "M13",
+   "pos": [
+    -1999.7,
+    -5622.6,
+    4409.4
+   ],
+   "desc": "Hercules cluster",
+   "cat": "mw"
+  },
+  {
+   "name": "M15",
+   "pos": [
+    8305.4,
+    -6374.5,
+    2257.3
+   ],
+   "desc": "",
+   "cat": "mw"
+  },
+  {
+   "name": "Draco",
+   "pos": [
+    -7470,
+    -42662,
+    69093
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Fornax",
+   "pos": [
+    90056,
+    75455,
+    -80747
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Leo I",
+   "pos": [
+    -222998,
+    117999,
+    55036
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "LMC",
+   "pos": [
+    3434,
+    17280,
+    -46356
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Sagittarius",
+   "pos": [
+    5516,
+    -21970,
+    -13369
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Sculptor",
+   "pos": [
+    67439,
+    18093,
+    -46600
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Sextans",
+   "pos": [
+    -76690,
+    38625,
+    -2428
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "SMC",
+   "pos": [
+    18212,
+    5308,
+    -59873
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "IC 10",
+   "pos": [
+    391214,
+    34929,
+    661281
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "NGC 6822",
+   "pos": [
+    243701,
+    -494484,
+    -145542
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "WLM",
+   "pos": [
+    953623,
+    8197,
+    -263771
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Andromeda (M31)",
+   "pos": [
+    578318,
+    109114,
+    516460
+   ],
+   "desc": "",
+   "cat": "lg"
+  },
+  {
+   "name": "Triangulum (M33)",
+   "pos": [
+    685720,
+    297620,
+    443139
+   ],
+   "desc": "",
+   "cat": "lg"
+  }
+ ]
+}

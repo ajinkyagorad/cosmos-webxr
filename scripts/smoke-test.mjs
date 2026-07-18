@@ -1,9 +1,10 @@
-// CDP smoke test v2: boots the app headlessly (SwiftShader WebGL, REAL time), then verifies:
+// CDP smoke test v3 (atlas navigation model): boots the app headlessly
+// (SwiftShader WebGL, REAL time), then verifies:
 //  · boot with zero console errors
-//  · jump to Saturn and BACK to Earth (round-trip must work exactly)
-//  · planet approach: arrive within a few radii, then thrust closer
+//  · jump to Saturn and BACK to Earth (target lands ~0.95 m ahead each time)
+//  · desktop thrust closes distance; STOP halts all motion (no inertia)
 //  · galaxy-scale views at 100 pc / 1 kpc / 50 kpc (screenshots, Milky Way visible)
-//  · Return Home from deep space + Back breadcrumb
+//  · Return Home from deep space + Back breadcrumb (exact pose restore)
 // Usage: node scripts/smoke-test.mjs [url]
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -16,7 +17,7 @@ const OUT = new URL("../docs/screenshots/", import.meta.url).pathname.replace(/^
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--enable-unsafe-swiftshader",
   "--use-gl=angle", "--use-angle=swiftshader", "--no-sandbox",
-  `--remote-debugging-port=${PORT}`, "--window-size=1280,800", "about:blank",
+  `--remote-debugging-port=${PORT}`, "--window-size=960,600", "about:blank",
 ], { stdio: "ignore" });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -46,7 +47,7 @@ async function shot(name) {
   writeFileSync(`${OUT}${name}.png`, Buffer.from(s.data, "base64"));
 }
 
-async function waitFor(exprStr, timeoutMs = 90000, poll = 700) {
+async function waitFor(exprStr, timeoutMs = 90000, poll = 500) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const v = await evaluate(exprStr);
@@ -55,6 +56,15 @@ async function waitFor(exprStr, timeoutMs = 90000, poll = 700) {
   }
   return null;
 }
+
+// World distance (metres) from the camera to a named selectable.
+const WORLD_DIST = (name) => `(() => {
+  const { app, selection, THREE } = window.__cosmos;
+  const s = selection['items'].find(x => x.name === '${name}');
+  if (!s) return -1;
+  const tp = selection.getWorldPosition(s, new THREE.Vector3());
+  return tp.distanceTo(app.camera.getWorldPosition(new THREE.Vector3()));
+})()`;
 
 async function main() {
   const target = await (async () => {
@@ -84,7 +94,7 @@ async function main() {
   await send("Page.navigate", { url: URL_TO_TEST });
 
   console.log("— boot —");
-  const booted = await waitFor(`!!window.__cosmos && document.getElementById('loading-overlay')?.classList.contains('hidden')`, 90000);
+  const booted = await waitFor(`!!window.__cosmos && document.getElementById('loading-overlay')?.classList.contains('hidden')`, 120000);
   check("boot completes", !!booted);
 
   // ---------- jump round trip: Saturn → back to Earth ----------
@@ -96,13 +106,9 @@ async function main() {
   })()`);
   const atSaturn = await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-3`, 120000);
   check("jump to Saturn arrives", !!atSaturn);
-  const satDist = await evaluate(`(() => {
-    const { selection, nav } = window.__cosmos;
-    const sat = selection['items'].find(s => s.name === 'Saturn');
-    const tp = selection.getWorldPosition(sat, new window.__cosmos.THREE.Vector3()).sub(window.__cosmos.app.universe.position);
-    return tp.distanceTo(nav.universePos(new window.__cosmos.THREE.Vector3())) / sat.radiusWorld;
-  })()`);
-  check("arrival within ~6 radii of Saturn", typeof satDist === "number" && satDist < 8, `${satDist?.toFixed?.(1)} radii`);
+  const satDist = await evaluate(WORLD_DIST("Saturn"));
+  check("Saturn lands ~0.95 m ahead", typeof satDist === "number" && satDist > 0.2 && satDist < 1.6,
+    `${satDist?.toFixed?.(2)} m`);
   await shot("test-saturn-arrival");
 
   // Jump back to Earth — the "jump-back doesn't return" regression test.
@@ -112,30 +118,29 @@ async function main() {
     nav.quickJump(earth);
   })()`);
   await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-3`, 120000);
-  const earthDist = await evaluate(`(() => {
-    const { selection, nav } = window.__cosmos;
-    const e = selection['items'].find(s => s.name === 'Earth');
-    const tp = selection.getWorldPosition(e, new window.__cosmos.THREE.Vector3()).sub(window.__cosmos.app.universe.position);
-    return tp.distanceTo(nav.universePos(new window.__cosmos.THREE.Vector3())) / e.radiusWorld;
-  })()`);
-  check("jump BACK to Earth arrives within ~8 radii", typeof earthDist === "number" && earthDist < 10, `${earthDist?.toFixed?.(1)} radii`);
+  const earthDist = await evaluate(WORLD_DIST("Earth"));
+  check("jump BACK to Earth lands ~0.95 m ahead", typeof earthDist === "number" && earthDist > 0.2 && earthDist < 1.6,
+    `${earthDist?.toFixed?.(2)} m`);
   await shot("test-earth-return");
 
-  // ---------- planet approach: thrust closer, collision floor must hold ----------
-  console.log("— planet approach —");
-  await evaluate(`window.__cosmos.nav.velocity.set(0,0,0); window.__cosmos.nav.thrustInput.set(0,0,-1); 'ok'`);
-  await sleep(4000);
-  await evaluate(`window.__cosmos.nav.thrustInput.set(0,0,0); window.__cosmos.nav.braking = true; 'ok'`);
-  await sleep(2500);
-  await evaluate(`window.__cosmos.nav.braking = false; 'ok'`);
-  const approachDist = await evaluate(`(() => {
-    const { selection, nav } = window.__cosmos;
-    const e = selection['items'].find(s => s.name === 'Earth');
-    const tp = selection.getWorldPosition(e, new window.__cosmos.THREE.Vector3()).sub(window.__cosmos.app.universe.position);
-    return tp.distanceTo(nav.universePos(new window.__cosmos.THREE.Vector3())) / e.radiusWorld;
-  })()`);
-  check("thrust closes distance toward Earth", typeof approachDist === "number" && approachDist < earthDist, `${approachDist?.toFixed?.(1)} radii (was ${earthDist?.toFixed?.(1)})`);
-  check("collision floor holds (≥1.0 radii)", typeof approachDist === "number" && approachDist >= 1.0);
+  // ---------- thrust toward Earth, then STOP (no inertia, no collision floor) ----------
+  // NOTE: SwiftShader frames are ~600 ms wall each, while App clamps dt to 100 ms —
+  // so easing settles in ~6× wall time here. Wait for the speed to decay instead of
+  // fixed sleeps (on real GPUs this settles in well under a second).
+  console.log("— thrust & stop —");
+  await evaluate(`window.__cosmos.nav.thrustInput.set(0,0,1); 'ok'`);
+  await sleep(400);
+  await evaluate(`window.__cosmos.nav.thrustInput.set(0,0,0); 'ok'`);
+  const settled = await waitFor(`window.__cosmos.nav.worldSpeed < 1e-2`, 60000);
+  check("no inertia after thrust release", !!settled);
+  const approachDist = await evaluate(WORLD_DIST("Earth"));
+  check("thrust closes distance toward Earth", typeof approachDist === "number" && approachDist < earthDist,
+    `${approachDist?.toFixed?.(2)} m (was ${earthDist?.toFixed?.(2)} m)`);
+  await evaluate(`window.__cosmos.nav.thrustInput.set(0,0,1); 'ok'`);
+  await sleep(400);
+  await evaluate(`window.__cosmos.nav.thrustInput.set(0,0,0); window.__cosmos.nav.stop(); 'ok'`);
+  const stopped = await waitFor(`window.__cosmos.nav.worldSpeed < 1e-2`, 60000);
+  check("STOP halts all motion", !!stopped);
 
   // ---------- galaxy-scale views ----------
   console.log("— galaxy scales —");
@@ -145,12 +150,12 @@ async function main() {
     ["scale-50kpc", 0, 8000, 50000],
   ]) {
     await evaluate(`(() => {
-      const { app, nav } = window.__cosmos;
-      nav.velocity.set(0,0,0);
-      app.universe.position.set(${-x}, ${-y}, ${-z});
-      app.rig.position.set(0, 0, 0);
+      const { nav, THREE } = window.__cosmos;
+      const d = Math.hypot(${x}, ${y}, ${z});
+      const log = Math.max(-7.3, -Math.log10(d) - 0.3);
+      nav.setPoseImmediate(new THREE.Vector3(${x}, ${y}, ${z}), new THREE.Quaternion(), log);
     })()`);
-    await sleep(2500);
+    await sleep(1500);
     await shot(name);
   }
   check("galaxy-scale teleports rendered (see screenshots)", true);
@@ -161,12 +166,16 @@ async function main() {
   const home = await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-2`, 180000);
   check("Return Home completes from 50 kpc", !!home);
   const homeDist = await evaluate(`window.__cosmos.nav.universePos(new window.__cosmos.THREE.Vector3()).length()`);
-  check("home position near solar system", typeof homeDist === "number" && homeDist < 1, `${homeDist?.toFixed?.(3)} units`);
+  check("home position near solar system", typeof homeDist === "number" && homeDist < 1, `${homeDist?.toFixed?.(3)} pc`);
   await shot("test-home");
 
   const backOk = await evaluate(`window.__cosmos.nav.goBack()`);
   check("Back breadcrumb available", backOk === true);
-  await waitFor(`window.__cosmos.nav.jumpState === 'idle'`, 180000);
+  await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-2`, 180000);
+  const backDist = await evaluate(`window.__cosmos.nav.universePos(new window.__cosmos.THREE.Vector3()).length()`);
+  check("Back restores the deep-space pose", typeof backDist === "number" && backDist > 30000,
+    `${backDist?.toFixed?.(0)} pc (expect ~50 636)`);
+  await shot("test-back-50kpc");
 
   // ---------- console log summary ----------
   console.log("\n— console logs —");

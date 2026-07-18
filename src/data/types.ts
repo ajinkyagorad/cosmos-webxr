@@ -37,3 +37,34 @@ export interface ManifestDataset {
   note?: string; file?: string;
 }
 export interface Manifest { generated: string; note: string; datasets: ManifestDataset[]; }
+
+/* ---- Milky Way Atlas datasets (scripts/fetch-extra.mjs + fetch_dust.py) ----
+   All point data is equatorial J2000 Cartesian pc (Sun at origin), like the rest
+   of the app. The dust cube is the exception: it stays galactic and is mounted
+   under a rotated group (see GALACTIC_TO_EQUATORIAL_Q in util/astro.ts). */
+
+export interface DustMeta {
+  source: string; url: string;
+  shape_zyx: [number, number, number];
+  extent_pc: { x: [number, number]; y: [number, number]; z: [number, number] };
+  frame: string; encoding: string; vmin: number; vmax: number; units: string;
+}
+export interface BinMeta { count: number; layout: string; source?: string; note?: string; }
+
+export interface GalaxyEntry {
+  name: string; pos: [number, number, number]; MV: number; rh: number;
+  host: string; ell: number; pa: number;
+}
+export interface GalaxyData { count: number; galaxies: GalaxyEntry[]; }
+
+export interface StarNameEntry { n: string; p: [number, number, number]; m: number; }
+export interface StarNamesData { count: number; stars: StarNameEntry[]; }
+
+export interface ConstellationData {
+  count: number; constellations: number;
+  segs: [[number, number, number], [number, number, number]][];
+  names: { name: string; pos: [number, number, number] }[];
+}
+
+export interface Landmark { name: string; pos: [number, number, number]; desc: string; cat: "cloud" | "mw" | "lg"; }
+export interface LandmarkData { count: number; landmarks: Landmark[]; }

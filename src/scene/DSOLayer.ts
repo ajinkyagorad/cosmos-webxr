@@ -78,7 +78,8 @@ export class DSOLayer {
         void main() {
           vColor = aColor; vType = aType; vSeed = aSeed;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          float px = aSize * uPixelRatio * (700.0 / max(-mv.z, 0.001));
+          float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
+          float px = aSize * mscale * uPixelRatio * (700.0 / max(-mv.z, 0.001));
           gl_PointSize = clamp(px, 1.5, 420.0);
           gl_Position = projectionMatrix * mv;
         }

@@ -19,6 +19,7 @@ export interface Selectable {
 
 const _v = new THREE.Vector3();
 const _toObj = new THREE.Vector3();
+const _m = new THREE.Matrix4();
 
 /**
  * 3D crosshair targeting marker (Elite-style): a cube frame of 8 corner brackets with
@@ -89,6 +90,24 @@ export class Selection implements Updatable {
     return out.set(0, 0, 0);
   }
 
+  /** Universe-local (parsec) position of any selectable. */
+  getUniPosition(s: Selectable, out = new THREE.Vector3()): THREE.Vector3 {
+    if (s.object) {
+      s.object.getWorldPosition(out);
+      return this.app.universe.worldToLocal(out);
+    }
+    if (s.position) return out.copy(s.position);
+    return out.set(0, 0, 0);
+  }
+
+  /** Live world-space radius (metres) of a selectable. Object selectables (planets,
+   *  probes, sprites) carry their size in their scale; catalog selectables store
+   *  radiusWorld in universe-local pc, converted by the universe scale. */
+  worldRadius(s: Selectable): number {
+    if (s.object) return Math.max(s.object.getWorldScale(_v).x, 1e-12);
+    return s.radiusWorld * this.app.universe.scale.x;
+  }
+
   select(s: Selectable | null) {
     this.target = s;
     this.marker.visible = !!s;
@@ -99,15 +118,22 @@ export class Selection implements Updatable {
 
   /**
    * Angular pick with magnetism: find the registry object nearest to the ray within a
-   * tolerant cone. tolScale widens the cone (used for imprecise hand aim).
+   * tolerant cone. The ray (world space) is transformed into universe-local space so
+   * distances and radii share one unit (pc) regardless of the current log scale.
+   * tolScale widens the cone (used for imprecise hand aim).
    */
+  private _localRay = new THREE.Ray();
   pickFromRay(raycaster: THREE.Raycaster, tolScale = 1): Selectable | null {
-    const origin = raycaster.ray.origin;
-    const dir = raycaster.ray.direction;
+    this._localRay.copy(raycaster.ray).applyMatrix4(
+      _m.copy(this.app.universe.matrixWorld).invert(),
+    );
+    this._localRay.direction.normalize();
+    const origin = this._localRay.origin;
+    const dir = this._localRay.direction;
     let best: Selectable | null = null;
     let bestScore = Infinity;
     for (const s of this.items) {
-      this.getWorldPosition(s, _v);
+      this.getUniPosition(s, _v);
       _toObj.subVectors(_v, origin);
       const dist = _toObj.length();
       if (dist < 1e-9) continue;
@@ -129,20 +155,15 @@ export class Selection implements Updatable {
   }
 
   /**
-   * Nearest SOLID body to a universe-local point: { surfaceDist, radius }.
-   * Used by Navigation for the gentle-approach speed cap and collision floor.
+   * Nearest SOLID body to a universe-local point: { surfaceDist, radius } (pc units).
+   * Kept for diagnostics/tests; the atlas model has no collision physics.
    */
   nearestSolid(uniPos: THREE.Vector3): { surfaceDist: number; radius: number } {
     let best = Infinity;
     let bestR = 0.001;
-    const uni = this.app.universe.matrixWorld;
     for (const s of this.items) {
       if (!s.solid) continue;
-      if (s.object) s.object.getWorldPosition(_v);
-      else if (s.position) _v.copy(s.position).applyMatrix4(uni);
-      else continue;
-      // _v is world; convert to universe-local: world = uniPos + universe.position
-      _v.sub(this.app.universe.position);
+      this.getUniPosition(s, _v);
       const d = _v.distanceTo(uniPos) - s.radiusWorld;
       if (d < best) { best = d; bestR = s.radiusWorld; }
     }
@@ -154,6 +175,6 @@ export class Selection implements Updatable {
     this.getWorldPosition(this.target, _v);
     const camPos = this.app.camera.getWorldPosition(_toObj);
     const d = _v.distanceTo(camPos);
-    this.marker.place(_v, this.app.camera.getWorldQuaternion(new THREE.Quaternion()), d, this.target.radiusWorld, t);
+    this.marker.place(_v, this.app.camera.getWorldQuaternion(new THREE.Quaternion()), d, this.worldRadius(this.target), t);
   }
 }

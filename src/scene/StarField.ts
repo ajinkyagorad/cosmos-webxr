@@ -50,7 +50,8 @@ export class StarField implements Updatable {
           float phase = fract(sin(dot(position.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
           vTwinkle = 0.82 + 0.18 * sin(uTime * (1.5 + fract(phase) * 2.0) + phase);
           float dist = -mv.z;
-          float px = sizeWorld * uPixelRatio * (700.0 / max(dist, 0.001));
+          float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
+          float px = sizeWorld * mscale * uPixelRatio * (700.0 / max(dist, 0.001));
           // Cap pixel size; keep a floor so distant stars stay visible.
           gl_PointSize = clamp(px, 1.0, 64.0);
           gl_Position = projectionMatrix * mv;

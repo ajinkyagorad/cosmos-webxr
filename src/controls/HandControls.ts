@@ -1,6 +1,10 @@
-// Hand-tracking controls: visible hand models, stable smoothed aim ray with laser + cursor,
-// pinch select (with ray magnetism), two-pinch pull-to-fly, open-palm brake,
-// pinch-hold on the wrist panel to detach it. Degrades gracefully to controllers-only.
+// Hand-tracking controls — Milky Way Atlas semantics:
+//   pinch ............ 1:1 grab of the universe (index-fingertip as the grab point)
+//   both hands pinch . pinch-stretch (scale) + turn about the hand midpoint
+//   quick tap-pinch .. select under the aim cursor / press a wrist-panel button
+//   pinch on panel ... panel button press (pinch-hold detaches/re-attaches the panel)
+// Visible hand models, stable smoothed aim ray with laser + cursor. Degrades
+// gracefully to controllers-only.
 import * as THREE from "three";
 import { XRHandModelFactory } from "three/addons/webxr/XRHandModelFactory.js";
 import type { Updatable, App } from "../core/App";
@@ -10,14 +14,18 @@ import type { WristPanel } from "../ui/WristPanel";
 
 interface HandRig {
   hand: THREE.Group | null;
-  pinching: boolean;
-  pinchHeld: number;
-  pinchFired: boolean;
-  aimDir: THREE.Vector3;     // low-pass filtered aim direction
+  pinching: boolean;        // physically pinching now
+  grabbing: boolean;        // pinch is steering the universe (not the panel)
+  pinchStart: number;       // seconds timestamp of pinch start
+  tipAtStart: THREE.Vector3;
+  aimDir: THREE.Vector3;    // low-pass filtered aim direction
   aimOrigin: THREE.Vector3;
   hasAim: boolean;
   laser: THREE.Line;
 }
+
+const TAP_MAX_SEC = 0.28;     // pinch shorter than this with little motion = tap (select)
+const TAP_MAX_MOVE = 0.02;    // metres of fingertip motion allowed for a tap
 
 export class HandControls implements Updatable {
   private app: App;
@@ -25,13 +33,12 @@ export class HandControls implements Updatable {
   private xr: XRControls;
   private rigs: [HandRig, HandRig];
   private cursor: THREE.Mesh;
-  private twoPinchLast = 0;
+  private clock = 0;
   wrist: WristPanel | null = null;
-  /** Fired with a world-space ray when a pinch begins (for selection). */
+  /** Fired with a world-space ray on a tap-pinch (selection / panel press). */
   onPinchRay: ((raycaster: THREE.Raycaster) => void) | null = null;
   /** Fired every frame with each active hand's aim ray (for hover/cursor). */
   private raycaster = new THREE.Raycaster();
-  /** Latest hover-pick callback supplied by main. */
   onAimRay: ((raycaster: THREE.Raycaster, handIndex: number) => THREE.Object3D | null) | null = null;
 
   constructor(app: App, nav: Navigation, xr: XRControls) {
@@ -51,8 +58,8 @@ export class HandControls implements Updatable {
     };
 
     this.rigs = [
-      { hand: null, pinching: false, pinchHeld: 0, pinchFired: false, aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser() },
-      { hand: null, pinching: false, pinchHeld: 0, pinchFired: false, aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser() },
+      { hand: null, pinching: false, grabbing: false, pinchStart: 0, tipAtStart: new THREE.Vector3(), aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser() },
+      { hand: null, pinching: false, grabbing: false, pinchStart: 0, tipAtStart: new THREE.Vector3(), aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser() },
     ];
 
     for (let i = 0; i < 2; i++) {
@@ -90,13 +97,24 @@ export class HandControls implements Updatable {
     }
   }
 
+  private joints(hand: THREE.Group): Record<string, THREE.Object3D> | undefined {
+    return (hand as unknown as { joints?: Record<string, THREE.Object3D> }).joints;
+  }
+
   private jointWorld(hand: THREE.Group, name: string, out: THREE.Vector3): boolean {
-    const joints = (hand as unknown as { joints?: Record<string, THREE.Object3D> }).joints;
-    const j = joints?.[name];
+    const j = this.joints(hand)?.[name];
     if (!j) return false;
     j.getWorldPosition(out);
     return true;
   }
+
+  /** Grab-point matrix: index fingertip, falling back to the wrist (reference poseMat). */
+  private tipMatrix = (rig: HandRig): THREE.Matrix4 | null => {
+    if (!rig.hand) return null;
+    const js = this.joints(rig.hand);
+    const j = js?.["index-finger-tip"] ?? js?.["wrist"];
+    return j ? j.matrixWorld : null;
+  };
 
   /** Stable aim: wrist → middle-finger MCP, low-pass filtered; origin slightly forward. */
   private updateAim(rig: HandRig, dt: number): boolean {
@@ -112,7 +130,6 @@ export class HandControls implements Updatable {
       rig.aimDir.copy(raw);
       rig.hasAim = true;
     } else {
-      // Low-pass filter to kill joint jitter (frame-rate independent).
       const k = 1 - Math.exp(-dt * 10);
       rig.aimDir.lerp(raw, k).normalize();
     }
@@ -126,18 +143,8 @@ export class HandControls implements Updatable {
     return tip.distanceTo(thumb) < 0.022;
   }
 
-  private isOpenPalm(hand: THREE.Group): boolean {
-    const palm = new THREE.Vector3();
-    if (!this.jointWorld(hand, "middle-finger-metacarpal", palm)) return false;
-    let open = 0;
-    for (const j of ["index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"]) {
-      const p = new THREE.Vector3();
-      if (this.jointWorld(hand, j, p) && p.distanceTo(palm) > 0.12) open++;
-    }
-    return open >= 3;
-  }
-
   update(dt: number, _t: number) {
+    this.clock += dt;
     if (this.app.mode === "desktop") {
       this.cursor.visible = false;
       for (const r of this.rigs) r.laser.visible = false;
@@ -149,7 +156,12 @@ export class HandControls implements Updatable {
     this.rigs.forEach((rig, i) => {
       if (!rig.hand) return;
       const hasAim = this.updateAim(rig, dt);
-      if (!hasAim) { rig.laser.visible = false; return; }
+      if (!hasAim) {
+        rig.laser.visible = false;
+        if (rig.grabbing) { this.nav.endGrab(i as 0 | 1); rig.grabbing = false; }
+        rig.pinching = false;
+        return;
+      }
       anyAim = true;
 
       // Aim ray for picking/hover.
@@ -178,57 +190,48 @@ export class HandControls implements Updatable {
       positions.needsUpdate = true;
       rig.laser.visible = true;
 
-      // Pinch: start → select via ray (with magnetism); hold on panel → detach toggle.
+      // ---- pinch: grab the universe · tap = select · on panel = UI ----
       const pinching = this.isPinching(rig.hand);
-      if (pinching) {
-        if (!rig.pinching) {
-          rig.pinching = true;
-          rig.pinchHeld = 0;
-          rig.pinchFired = false;
+      if (pinching && !rig.pinching) {
+        // pinch start
+        rig.pinching = true;
+        rig.pinchStart = this.clock;
+        this.jointWorld(rig.hand, "index-finger-tip", rig.tipAtStart);
+        const panelHit = this.wrist ? this.wrist.intersect(this.raycaster) : null;
+        if (panelHit !== null) {
+          // Panel press — don't grab (reference suppresses grab while panel-hot).
+          rig.grabbing = false;
           this.onPinchRay?.(this.raycaster);
           this.xr.pulse(i === 1 ? "right" : "left", 0.25, 25);
         } else {
-          rig.pinchHeld += dt;
-          if (rig.pinchHeld > 0.6 && !rig.pinchFired && this.wrist) {
-            const btn = this.wrist.intersect(this.raycaster);
-            if (btn !== null || this.wrist.detached) {
-              rig.pinchFired = true;
-              this.wrist.togglePin();
-              this.xr.pulse(i === 1 ? "right" : "left", 0.5, 60);
-            }
+          rig.grabbing = true;
+          this.nav.startGrab(i as 0 | 1, () => this.tipMatrix(rig));
+        }
+      } else if (!pinching && rig.pinching) {
+        // pinch end
+        rig.pinching = false;
+        if (rig.grabbing) {
+          this.nav.endGrab(i as 0 | 1);
+          rig.grabbing = false;
+          // Short, still pinch = tap → select under the cursor.
+          const held = this.clock - rig.pinchStart;
+          const tip = new THREE.Vector3();
+          this.jointWorld(rig.hand, "index-finger-tip", tip);
+          if (held < TAP_MAX_SEC && tip.distanceTo(rig.tipAtStart) < TAP_MAX_MOVE) {
+            this.onPinchRay?.(this.raycaster);
+            this.xr.pulse(i === 1 ? "right" : "left", 0.25, 25);
           }
         }
-      } else {
-        rig.pinching = false;
-        rig.pinchHeld = 0;
+      } else if (pinching && rig.pinching && !rig.grabbing && this.wrist) {
+        // Held pinch on the panel → detach/re-attach after 0.6 s.
+        if (this.clock - rig.pinchStart > 0.6 && (this.wrist.detached || this.wrist.intersect(this.raycaster) !== null)) {
+          this.wrist.togglePin();
+          rig.pinchStart = this.clock + 999; // fire once per pinch
+          this.xr.pulse(i === 1 ? "right" : "left", 0.5, 60);
+        }
       }
     });
 
     if (!cursorSet) this.cursor.visible = false;
-
-    // Two-pinch pull = fly (pull space toward you, speed ∝ pull velocity).
-    const bothPinching = this.rigs[0].pinching && this.rigs[1].pinching && anyAim;
-    if (bothPinching) {
-      const mid = this.rigs[0].aimOrigin.clone().add(this.rigs[1].aimOrigin).multiplyScalar(0.5);
-      // Project pull along head forward for intuitive "pull toward face" flight.
-      const headQ = this.app.camera.getWorldQuaternion(new THREE.Quaternion());
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQ);
-      const midHead = mid.clone().sub(this.app.camera.getWorldPosition(new THREE.Vector3()));
-      const zNow = midHead.dot(fwd);
-      if (this.twoPinchLast !== 0) {
-        const pull = zNow - this.twoPinchLast; // negative = pulling toward you
-        this.nav.velocity.addScaledVector(fwd, -pull * 14 / Math.max(dt, 1e-3) * dt);
-      }
-      this.twoPinchLast = zNow;
-    } else {
-      this.twoPinchLast = 0;
-    }
-
-    // Open palm = gentle brake.
-    let palmBrake = false;
-    for (const r of this.rigs) {
-      if (r.hand && !r.pinching && this.isOpenPalm(r.hand)) palmBrake = true;
-    }
-    if (palmBrake) this.nav.braking = true;
   }
 }

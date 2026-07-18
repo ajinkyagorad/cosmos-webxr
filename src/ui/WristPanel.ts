@@ -15,6 +15,12 @@ const LAYER_KEYS: { key: string; label: string }[] = [
   { key: "labels", label: "Labels" },
   { key: "orbits", label: "Orbits" },
   { key: "layerStars", label: "Stars" },
+  { key: "layerDust", label: "Dust" },
+  { key: "layerCepheids", label: "Cepheids" },
+  { key: "layerGlobulars", label: "Globulars" },
+  { key: "layerGalaxies", label: "Galaxies" },
+  { key: "layerConstellations", label: "Constell." },
+  { key: "starNames", label: "Star names" },
   { key: "layerExoplanets", label: "Exoplanets" },
   { key: "layerDSO", label: "Deep-sky" },
   { key: "layerMissions", label: "Missions" },
@@ -69,11 +75,12 @@ export class WristPanel implements Updatable {
     this.detached = false;
   }
 
-  /** Detach so it floats fixed in the universe; call again to re-attach to the wrist. */
+  /** Detach so it floats fixed in the room (scene-level — the universe moves under
+   *  grab/zoom, a pinned panel must not ride it); call again to re-attach to the wrist. */
   togglePin() {
     if (!this.attachParent) return;
     if (!this.detached) {
-      this.app.universe.attach(this.mesh); // keeps world transform, rides the floating origin
+      this.app.scene.attach(this.mesh); // keeps world transform, pinned in the user frame
       this.detached = true;
     } else {
       this.attachParent.attach(this.mesh);
@@ -122,7 +129,7 @@ export class WristPanel implements Updatable {
     if (id.startsWith("layer:")) { settings.toggle(id.slice(6) as never); return; }
     switch (id) {
       case "jump": if (this.selection.target) this.nav.quickJump(this.selection.target); break;
-      case "brake": this.nav.velocity.multiplyScalar(0.05); break;
+      case "stop": this.nav.stop(); break;
       case "home": this.nav.goHome(); break;
       case "back": this.nav.goBack(); break;
       case "pin": this.togglePin(); break;
@@ -205,8 +212,8 @@ export class WristPanel implements Updatable {
     const tname = this.selection.target ? this.selection.target.name : "—";
     g.fillText(tname.length > 20 ? tname.slice(0, 19) + "…" : tname, 18, 234);
     if (this.selection.target) {
-      const tp = this.selection.getWorldPosition(this.selection.target, new THREE.Vector3());
-      const dUni = tp.sub(this.app.universe.position).distanceTo(this.nav.universePos(new THREE.Vector3()));
+      const dUni = this.selection.getUniPosition(this.selection.target, new THREE.Vector3())
+        .distanceTo(this.nav.universePos(new THREE.Vector3()));
       g.fillStyle = "#8fa3c0"; g.font = "400 20px system-ui";
       g.fillText(formatDistancePC(Math.abs(dUni)), 18, 262);
       void PC_IN_KM;
@@ -214,7 +221,7 @@ export class WristPanel implements Updatable {
 
     const y = 290, bw = 232, bh = 62, m = 14;
     this.btn({ id: "jump", label: "⟶ JUMP", x: 12, y, w: bw, h: bh, active: !!this.selection.target });
-    this.btn({ id: "brake", label: "◼ BRAKE", x: 12 + bw + m, y, w: bw, h: bh });
+    this.btn({ id: "stop", label: "◼ STOP", x: 12 + bw + m, y, w: bw, h: bh });
     this.btn({ id: "home", label: "⌂ HOME", x: 12, y: y + bh + m, w: bw, h: bh });
     this.btn({ id: "back", label: "⏮ BACK", x: 12 + bw + m, y: y + bh + m, w: bw, h: bh, dim: !this.nav.hasBreadcrumbs });
     this.btn({ id: "pin", label: this.detached ? "📌 Attach to wrist" : "📌 Detach (float)", x: 12, y: y + (bh + m) * 2, w: bw * 2 + m, h: bh, active: this.detached });
@@ -244,7 +251,7 @@ export class WristPanel implements Updatable {
       const col = i % 2, row = Math.floor(i / 2);
       this.btn({
         id: `layer:${l.key}`, label: l.label,
-        x: 12 + col * 250, y: 106 + row * 70, w: 238, h: 58,
+        x: 12 + col * 250, y: 100 + row * 66, w: 238, h: 58,
         active: settings.get(l.key as never) as boolean,
       });
     });

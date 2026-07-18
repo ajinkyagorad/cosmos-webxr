@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "fetch-data": "node scripts/fetch-data.mjs",
+    "fetch-extra": "node scripts/fetch-extra.mjs",
+    "test:nav": "esbuild scripts/nav-test.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/nav-test.bundle.mjs \"--banner:js=globalThis.localStorage??={getItem:()=>null,setItem:()=>{},removeItem:()=>{}};globalThis.window??=globalThis;globalThis.document??={createElement:()=>({style:{},getContext:()=>null}),createElementNS:()=>({style:{}}),addEventListener:()=>{}};globalThis.self??=globalThis;\" && node node_modules/.cache/nav-test.bundle.mjs",
     "deploy": "npm run build && wrangler pages deploy dist --project-name cosmos-webxr"
   },
   "dependencies": {

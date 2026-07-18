@@ -14,6 +14,12 @@ export interface SettingsState {
   layerCompact: boolean;
   layerCinematic: boolean;
   layerSkybox: boolean;
+  layerDust: boolean;
+  layerCepheids: boolean;
+  layerGlobulars: boolean;
+  layerGalaxies: boolean;
+  layerConstellations: boolean;
+  starNames: boolean;
   // solar system
   labels: boolean;
   orbits: boolean;
@@ -39,6 +45,12 @@ const DEFAULTS: SettingsState = {
   layerCompact: true,
   layerCinematic: false,
   layerSkybox: true,
+  layerDust: true,
+  layerCepheids: true,
+  layerGlobulars: true,
+  layerGalaxies: true,
+  layerConstellations: false,
+  starNames: true,
   labels: true,
   orbits: true,
   planetSizeExaggeration: 800,

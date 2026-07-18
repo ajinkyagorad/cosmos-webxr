@@ -1,4 +1,8 @@
-// Core renderer / scene / XR-session management + floating origin.
+// Core renderer / scene / XR-session management.
+// Atlas control model: the user (rig) stays at the origin; the universe group is
+// moved/rotated/log-scaled around them by Navigation, so there is no floating
+// origin and no recentering — rendered world coordinates stay within metres of
+// the headset at every zoom level by construction.
 import * as THREE from "three";
 import { vignetteTexture } from "../util/textures";
 
@@ -10,9 +14,9 @@ export class App {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
-  /** Camera rig — move/rotate this for navigation (camera itself is XR-pose driven). */
+  /** Camera rig — stays at the origin (camera itself is XR-pose driven). */
   rig = new THREE.Group();
-  /** All universe content lives here; floating origin shifts it so the rig stays near 0. */
+  /** All universe content lives here; Navigation steers its transform + log scale. */
   universe = new THREE.Group();
   mode: AppMode = "desktop";
   clock = new THREE.Clock();
@@ -20,8 +24,6 @@ export class App {
   private vignette: THREE.Mesh;
   vignetteStrength = 0;
   onSessionEnd: (() => void) | null = null;
-  /** Total floating-origin offset applied so far (for diagnostics). */
-  readonly originOffset = new THREE.Vector3();
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -101,30 +103,16 @@ export class App {
   }
 
   /**
-   * Floating origin: keep the rig within 1 unit of 0,0,0 by shifting the universe
-   * the other way. A tight threshold keeps every rendered coordinate tiny, which is
-   * what actually kills float32 jitter at kpc–Mpc scales: all matrix translation
-   * cancellation happens against near-zero values. Recentering is a cheap uniform
-   * translation of one parent group; every layer (stars, DSOs, solar system,
-   * exoplanets, missions, labels, markers) rides it identically.
+   * No floating origin: the rig never leaves (0,0,0). Navigation moves the universe
+   * instead, and its log scale keeps every rendered coordinate within metres of the
+   * user, which is what kills float32 jitter at kpc–Mpc scales in this model.
    */
-  private recenter() {
-    const p = this.rig.position;
-    const d2 = p.lengthSq();
-    if (d2 > 1.0) {
-      this.universe.position.sub(p);
-      this.originOffset.add(p);
-      this.rig.position.set(0, 0, 0);
-    }
-  }
-
   start() {
     let firstFrame = true;
     this.renderer.setAnimationLoop(() => {
       if (firstFrame) { firstFrame = false; console.log("[cosmos] first frame rendered"); }
       const dt = Math.min(this.clock.getDelta(), 0.1);
       const t = this.clock.elapsedTime;
-      this.recenter();
       for (const u of this.updatables) u.update(dt, t);
       // vignette fade
       const m = this.vignette.material as THREE.MeshBasicMaterial;

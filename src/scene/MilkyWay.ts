@@ -1,4 +1,7 @@
 // Milky Way: equirect skybox sphere (ESA/Gaia all-sky) + galactic dust plane.
+// The skybox is camera-following BACKGROUND at scene level (fixed world radius): it does
+// not scale with the universe — only its orientation rides the universe quaternion, so
+// yawing/grabbing the universe swings the sky exactly like the catalogs.
 import * as THREE from "three";
 import type { Updatable, App } from "../core/App";
 import { radecToVec } from "../util/astro";
@@ -8,6 +11,10 @@ import { radialSpriteTexture, proceduralPlanetTexture } from "../util/textures";
 export const GALACTIC_CENTER_PC = radecToVec(266.405, -29.0078, 8178);
 // North galactic pole: RA 192.86°, Dec +27.13° (J2000) — disk plane normal.
 const GALACTIC_NORMAL = radecToVec(192.86, 27.13, 1).normalize();
+
+const SKY_RADIUS = 1e6; // world metres — constant at every zoom level
+const _camPos = new THREE.Vector3();
+const _baseQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, THREE.MathUtils.degToRad(-266.4), 0));
 
 export class MilkyWay implements Updatable {
   group = new THREE.Group();
@@ -37,13 +44,13 @@ export class MilkyWay implements Updatable {
     });
     skyMat.color.setScalar(0.82); // slightly dimmed so catalog layers stay readable
     this.skyMat = skyMat;
-    this.sky = new THREE.Mesh(new THREE.SphereGeometry(1e8, 48, 32), skyMat);
+    this.sky = new THREE.Mesh(new THREE.SphereGeometry(SKY_RADIUS, 48, 32), skyMat);
     // Align texture so its galactic center sits at RA 266.4°, Dec −29° (see u↔RA derivation
     // in README; SphereGeometry u=0.5 ↔ RA 0 at rotation 0, texture GC at u≈0.5 → rotate −266.4°).
-    this.sky.rotation.y = THREE.MathUtils.degToRad(-266.4);
+    this.sky.quaternion.copy(_baseQ);
     this.sky.renderOrder = -100;
     this.sky.frustumCulled = false;
-    this.group.add(this.sky);
+    app.scene.add(this.sky); // scene-level: follows the camera, constant world size
 
     // --- Galactic dust plane: additive sprites distributed in a spiral disk around the GC ---
     this.group.add(this.buildDisk());
@@ -51,13 +58,17 @@ export class MilkyWay implements Updatable {
   }
 
   /**
-   * The skybox is the view from INSIDE the galaxy. When the camera travels far outside
-   * (tens of kpc), fade it out so the procedural spiral disk becomes the galaxy's visual
-   * instead of a washed-out all-sky fog. Near home it stays at full strength.
+   * The skybox is the view from INSIDE the galaxy. When the user travels far outside
+   * (tens of kpc from the Sun), fade it out so the procedural spiral disk becomes the
+   * galaxy's visual instead of a washed-out all-sky fog. Near home it stays at full
+   * strength. Orientation rides the universe; position follows the camera.
    */
   update(_dt: number, _t: number) {
-    const camDist = this.app.rig.position.length(); // ≈ distance from Sun (universe origin)
-    const fade = THREE.MathUtils.smoothstep(camDist, 25000, 60000);
+    this.app.camera.getWorldPosition(_camPos);
+    this.sky.position.copy(_camPos);
+    this.sky.quaternion.copy(this.app.universe.quaternion).multiply(_baseQ);
+    const uniDist = this.app.universe.worldToLocal(_camPos.clone()).length(); // pc from the Sun
+    const fade = THREE.MathUtils.smoothstep(uniDist, 25000, 60000);
     this.skyMat.opacity = 1 - fade * 0.88; // 1.0 near home → 0.12 at ≥60 kpc
   }
 
@@ -120,7 +131,8 @@ export class MilkyWay implements Updatable {
         void main() {
           vColor = aColor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          float px = aSize * uPixelRatio * (700.0 / max(-mv.z, 0.001));
+          float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
+          float px = aSize * mscale * uPixelRatio * (700.0 / max(-mv.z, 0.001));
           gl_PointSize = clamp(px, 0.5, 256.0);
           gl_Position = projectionMatrix * mv;
         }

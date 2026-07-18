@@ -45,7 +45,8 @@ export class ExoplanetLayer {
         void main() {
           vColor = aColor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          float px = 0.06 * uPixelRatio * (700.0 / max(-mv.z, 0.001));
+          float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
+          float px = 0.06 * mscale * uPixelRatio * (700.0 / max(-mv.z, 0.001));
           gl_PointSize = clamp(px, 2.0, 10.0);
           gl_Position = projectionMatrix * mv;
         }

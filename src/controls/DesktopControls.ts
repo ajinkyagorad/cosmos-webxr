@@ -1,4 +1,6 @@
-// Desktop controls: pointer-lock mouse look + WASD flight + keys for all features.
+// Desktop controls on the atlas model: pointer-lock mouse look (turn your head —
+// the user stays at the origin), WASD/QE translates the universe opposite the gaze,
+// scroll = clamped log-scale zoom, Space = stop all motion, J = charge-jump.
 import * as THREE from "three";
 import type { Updatable, App } from "../core/App";
 import type { Navigation } from "./Navigation";
@@ -49,7 +51,8 @@ export class DesktopControls implements Updatable {
     });
     window.addEventListener("wheel", (e) => {
       if (this.app.mode !== "desktop") return;
-      this.nav.setAccelLog(e.deltaY > 0 ? -1 : 1);
+      // Scroll = log-scale zoom (up = in), hard-clamped by Navigation.
+      this.nav.zoomLog(e.deltaY > 0 ? -0.12 : 0.12);
     }, { passive: true });
   }
 
@@ -73,33 +76,27 @@ export class DesktopControls implements Updatable {
     }
   }
 
-  /**
-   * Rotate the view toward a world-space direction (used by FTL arrival so you
-   * always come out of a jump facing your destination).
-   */
-  orientToward(dirWorld: THREE.Vector3, alpha: number) {
-    const yawT = Math.atan2(-dirWorld.x, -dirWorld.z);
-    const pitchT = Math.asin(THREE.MathUtils.clamp(dirWorld.y, -1, 1));
-    // shortest-arc yaw interpolation
-    const dYaw = Math.atan2(Math.sin(yawT - this.yaw), Math.cos(yawT - this.yaw));
-    this.yaw += dYaw * alpha;
-    this.pitch += (pitchT - this.pitch) * alpha;
-  }
-
   update(_dt: number, _t: number) {
     if (this.app.mode !== "desktop") {
+      // In XR the headset owns the camera; the rig must be the identity.
       this.nav.thrustInput.set(0, 0, 0);
+      if (Math.abs(this.app.rig.quaternion.x) > 1e-6 || Math.abs(this.app.rig.quaternion.y) > 1e-6 ||
+          Math.abs(this.app.rig.quaternion.z) > 1e-6 || Math.abs(this.app.rig.quaternion.w - 1) > 1e-6) {
+        this.app.rig.quaternion.slerp(new THREE.Quaternion(), 0.2);
+      }
       return;
     }
-    // Apply look orientation: yaw on rig, pitch on camera.
+    // Look: yaw on the rig, pitch on the camera (the rig never translates).
     this.app.rig.quaternion.setFromEuler(new THREE.Euler(0, this.yaw, 0, "YXZ"));
     this.app.camera.quaternion.setFromEuler(new THREE.Euler(this.pitch, 0, 0, "YXZ"));
 
-    const f = (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) ? 1 : 0.18;
+    const boost = (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) ? 4 : 1;
     const x = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
     const y = (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0);
-    const z = (this.keys.has("KeyS") ? 1 : 0) - (this.keys.has("KeyW") ? 1 : 0);
-    this.nav.thrustInput.set(x * f, y * f, z * f);
-    this.nav.braking = this.keys.has("Space");
+    const z = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0); // + = forward intent
+    this.nav.thrustInput.set(x, y, z);
+    this.nav.thrustBoost = boost;
+    // Space = halt all eased motion immediately.
+    if (this.keys.has("Space")) this.nav.stop();
   }
 }

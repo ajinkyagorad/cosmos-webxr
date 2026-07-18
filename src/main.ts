@@ -15,7 +15,9 @@ import { MissionsLayer } from "./scene/Missions";
 import { CinematicLayer } from "./scene/CinematicLayer";
 import { LabelManager } from "./scene/Labels";
 import { Selection, type Selectable } from "./scene/Selection";
-import { Navigation, HOME_POS } from "./controls/Navigation";
+import { DustVolume, CepheidLayer, GlobularLayer, LocalGroupLayer, ConstellationLayer } from "./scene/AtlasLayers";
+import { StarNameHover } from "./scene/StarNames";
+import { Navigation } from "./controls/Navigation";
 import { DesktopControls } from "./controls/DesktopControls";
 import { XRControls } from "./controls/XRControls";
 import { HandControls } from "./controls/HandControls";
@@ -68,13 +70,40 @@ async function boot() {
   const cinematic = new CinematicLayer();
   app.universe.add(cinematic.group);
 
-  // ---------- labels ----------
+  // ---------- Milky Way Atlas layers (real dust/disk/halo/Local Group data) ----------
+  let dust: DustVolume | null = null;
+  if (data.dust) {
+    dust = new DustVolume(data.dust.meta, data.dust.buffer);
+    app.universe.add(dust.group);
+  }
+  let cepheids: CepheidLayer | null = null;
+  if (data.cepheids) {
+    cepheids = new CepheidLayer(data.cepheids.meta, data.cepheids.buffer);
+    app.universe.add(cepheids.points);
+  }
+  let globulars: GlobularLayer | null = null;
+  if (data.globulars) {
+    globulars = new GlobularLayer(data.globulars.meta, data.globulars.buffer);
+    app.universe.add(globulars.points);
+  }
+  let localGroup: LocalGroupLayer | null = null;
+  if (data.galaxies) {
+    localGroup = new LocalGroupLayer(data.galaxies);
+    app.universe.add(localGroup.points);
+  }
+  let constellations: ConstellationLayer | null = null;
+  if (data.constellations) {
+    constellations = new ConstellationLayer(data.constellations);
+    app.universe.add(constellations.lines);
+  }
+
+  // ---------- labels (world-space, constant angular size, per-label zoom windows) ----------
   const labels = new LabelManager(app);
-  app.universe.add(labels.object);
   app.addUpdatable(labels);
   const labelQueue: Promise<void>[] = [];
-  for (const a of solar.getLabelAnchors()) labelQueue.push(labels.add(a.name, a.object, { size: 0.05 }));
-  for (const a of missions.getLabelAnchors()) labelQueue.push(labels.add(a.name, a.object, { size: 0.02, color: "#9fd0ff" }));
+  // Solar-system museum labels only make sense at solar zoom; star names only outside it.
+  for (const a of solar.getLabelAnchors()) labelQueue.push(labels.add(a.name, a.object, { size: 0.05, minLog: 0.2 }));
+  for (const a of missions.getLabelAnchors()) labelQueue.push(labels.add(a.name, a.object, { size: 0.02, color: "#9fd0ff", minLog: 0.2 }));
   // Top ~60 named stars by brightness get labels.
   for (const n of data.stars.meta.names.slice(0, 60)) {
     const i = n.i;
@@ -83,7 +112,7 @@ async function boot() {
       const anchor = new THREE.Object3D();
       anchor.position.set(b[i * 5], b[i * 5 + 1], b[i * 5 + 2]);
       app.universe.add(anchor);
-      labelQueue.push(labels.add(n.n, anchor, { size: 0.25, color: "#ffe9c9" }));
+      labelQueue.push(labels.add(n.n, anchor, { size: 0.25, color: "#ffe9c9", maxLog: 0.5 }));
     }
   }
   // Compact objects + named DSOs labels.
@@ -100,13 +129,33 @@ async function boot() {
     app.universe.add(anchor);
     labelQueue.push(labels.add(o.cn, anchor, { size: 2.0, color: "#b0ffc8" }));
   });
-  for (const a of cinematic.getLabelAnchors()) labelQueue.push(labels.add(a.name, a.object, { size: 60, color: "#e0c8ff" }));
+  for (const a of cinematic.getLabelAnchors()) {
+    labelQueue.push(labels.add(a.name, a.object, { size: 60, color: "#e0c8ff", when: () => settings.get("layerCinematic") }));
+  }
   // Galactic-center beacon label so the Milky Way stays orientable at kpc scales.
   {
     const gcAnchor = new THREE.Object3D();
     gcAnchor.position.copy(GALACTIC_CENTER_PC);
     app.universe.add(gcAnchor);
-    labelQueue.push(labels.add("Milky Way · Galactic Center", gcAnchor, { size: 8, color: "#ffd9a0" }));
+    labelQueue.push(labels.add("Milky Way · Galactic Center", gcAnchor, { size: 8, color: "#ffd9a0", minLog: -7, maxLog: -2 }));
+  }
+  // Landmark labels (local clouds / Milky Way / Local Group), each in its zoom window.
+  const LANDMARK_LABEL: Record<string, { size: number; color: string; minLog: number; maxLog: number }> = {
+    cloud: { size: 4, color: "#ff9a3c", minLog: -4.7, maxLog: 1.2 },
+    mw: { size: 30, color: "#6fd6ff", minLog: -6.8, maxLog: -2.4 },
+    lg: { size: 200, color: "#c9a7ff", minLog: -7.3, maxLog: -3.8 },
+  };
+  const landmarkAnchors: { lm: { name: string; pos: [number, number, number]; desc: string; cat: "cloud" | "mw" | "lg" }; anchor: THREE.Object3D }[] = [];
+  if (data.landmarks) {
+    for (const lm of data.landmarks.landmarks) {
+      if (lm.name === "Sun" || lm.name === "Sun + local clouds") continue; // already at home
+      const anchor = new THREE.Object3D();
+      anchor.position.set(lm.pos[0], lm.pos[1], lm.pos[2]);
+      app.universe.add(anchor);
+      landmarkAnchors.push({ lm, anchor });
+      const st = LANDMARK_LABEL[lm.cat];
+      labelQueue.push(labels.add(lm.name, anchor, { size: st.size, color: st.color, minLog: st.minLog, maxLog: st.maxLog }));
+    }
   }
   await Promise.allSettled(labelQueue);
 
@@ -119,6 +168,28 @@ async function boot() {
   selection.registerMany(compact.toSelectables());
   selection.registerMany(missions.toSelectables());
   selection.registerMany(cinematic.toSelectables());
+  if (localGroup) selection.registerMany(localGroup.toSelectables());
+  // Landmarks as selectable destinations (radii approximate their real extents).
+  const LANDMARK_RADIUS: Record<string, number> = { cloud: 15, mw: 300, lg: 4000 };
+  const landmarkDests: { name: string; cat: string; sel: Selectable; distPC?: number }[] = [];
+  for (const { lm } of landmarkAnchors) {
+    const sel: Selectable = {
+      id: `lm-${lm.name}`,
+      name: lm.name,
+      kind: "landmark",
+      position: new THREE.Vector3(lm.pos[0], lm.pos[1], lm.pos[2]),
+      radiusWorld: LANDMARK_RADIUS[lm.cat] ?? 50,
+      describe: () =>
+        `<b>${lm.name}</b>${lm.desc ? `<br>${lm.desc}` : ""}<br>` +
+        `Distance: ${formatDistancePC(Math.hypot(lm.pos[0], lm.pos[1], lm.pos[2]))}<br>` +
+        `<span class="dim">Published position (see manifest)</span>`,
+    };
+    selection.registerMany([sel]);
+    landmarkDests.push({
+      name: lm.name, cat: "LANDMARKS", sel,
+      distPC: Math.hypot(lm.pos[0], lm.pos[1], lm.pos[2]),
+    });
+  }
   // Named stars as selectables (top 400).
   data.stars.meta.names.forEach((n) => {
     const i = n.i, b = data.stars.buffer;
@@ -136,9 +207,14 @@ async function boot() {
   });
 
   // ---------- navigation & effects ----------
-  const nav = new Navigation(app, selection);
+  const nav = new Navigation(app);
   app.addUpdatable(nav);
-  // (No fake warp particles: jumps are real accelerated travel through the actual star field.)
+  // (No fake warp particles: travel eases the real universe transform past the user.)
+
+  // Star-name hover tags (desktop look ray / XR controller ray — provider wired below).
+  const starNameHover = new StarNameHover(app, data.starNames);
+  app.addUpdatable(starNameHover);
+  const hoverRaycaster = new THREE.Raycaster();
 
   const hud = new HUD(app, nav, selection, audio);
   const desktop = new DesktopControls(app, nav, selection);
@@ -150,6 +226,21 @@ async function boot() {
   const wrist = new WristPanel(app, nav, selection);
   app.addUpdatable(wrist);
   hands.wrist = wrist;
+
+  // Hover ray for star-name tags: desktop look direction, else right controller.
+  starNameHover.rayProvider = () => {
+    if (app.mode === "desktop") {
+      hoverRaycaster.ray.origin.copy(app.camera.getWorldPosition(new THREE.Vector3()));
+      hoverRaycaster.ray.direction.copy(app.camera.getWorldDirection(new THREE.Vector3()));
+      return hoverRaycaster.ray;
+    }
+    const ctrl = xr.controllers.find((c) => c.userData.hand === "right") ?? xr.controllers[0];
+    if (!ctrl) return null;
+    const m = ctrl.matrixWorld;
+    hoverRaycaster.ray.origin.setFromMatrixPosition(m);
+    hoverRaycaster.ray.direction.set(0, 0, -1).transformDirection(new THREE.Matrix4().extractRotation(m));
+    return hoverRaycaster.ray;
+  };
 
   // Selection picking (desktop click uses camera ray; XR uses controller/pinch ray).
   const pickRay = new THREE.Raycaster();
@@ -188,20 +279,8 @@ async function boot() {
     return null;
   };
 
-  // Arrival orientation: end every jump facing the destination.
-  const _hq = new THREE.Quaternion();
-  nav.onOrient = (dir, alpha) => {
-    if (app.mode === "desktop") {
-      desktop.orientToward(dir, alpha);
-    } else {
-      // XR: yaw the rig so the headset's forward ends up centered on the target.
-      const headFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(app.camera.getWorldQuaternion(_hq));
-      const curYaw = Math.atan2(-headFwd.x, -headFwd.z);
-      const wantYaw = Math.atan2(-dir.x, -dir.z);
-      const dYaw = Math.atan2(Math.sin(wantYaw - curYaw), Math.cos(wantYaw - curYaw));
-      app.rig.rotateY(dYaw * alpha);
-    }
-  };
+  // (Arrival orientation is handled inside Navigation.beginTravel — the universe yaws
+  //  so the destination ends up ahead of the user, in every mode.)
 
   // ---------- audio hooks ----------
   nav.onJumpProgress = (state, charge) => {
@@ -219,7 +298,9 @@ async function boot() {
 
   // ---------- destinations list ----------
   const allDest = buildDestinations(hud, selection, { solar, dso, compact, exoplanets, missions, cinematic });
-  wrist.setDestinations(allDest.map((d) => ({ name: d.name, sel: d.sel })));
+  hud.addDestinations(landmarkDests);
+  const wristDest = [...allDest, ...landmarkDests];
+  wrist.setDestinations(wristDest.map((d) => ({ name: d.name, sel: d.sel })));
 
   // ---------- layer visibility wiring ----------
   const applyLayers = () => {
@@ -229,6 +310,11 @@ async function boot() {
     missions.group.visible = settings.get("layerMissions");
     compact.group.visible = settings.get("layerCompact");
     cinematic.group.visible = settings.get("layerCinematic");
+    if (dust) dust.group.visible = settings.get("layerDust");
+    if (cepheids) cepheids.points.visible = settings.get("layerCepheids");
+    if (globulars) globulars.points.visible = settings.get("layerGlobulars");
+    if (localGroup) localGroup.points.visible = settings.get("layerGalaxies");
+    if (constellations) constellations.lines.visible = settings.get("layerConstellations");
     // Skybox: toggleable everywhere; hidden by default in passthrough AR (no "bubble").
     milkyWay.sky.visible = settings.get("layerSkybox") && app.mode !== "ar";
     labels.setVisible(settings.get("labels"));
@@ -239,23 +325,25 @@ async function boot() {
   // ---------- comfort vignette + per-frame misc ----------
   app.addUpdatable({
     update(dt: number) {
-      // Vignette strength from speed (VR default on; desktop follows setting).
-      const speedNorm = Math.min(1, nav.speedUnits / (nav.accel * 4 + 1e-9));
+      // Vignette strength from REAL eased world speed (VR default on; desktop follows setting).
+      const speedNorm = Math.min(1, nav.worldSpeed / 10);
       const want = settings.get("vignette") && (app.mode !== "desktop" || speedNorm > 0.5)
         ? speedNorm * 0.85
         : 0;
       app.vignetteStrength += (want - app.vignetteStrength) * Math.min(1, dt * 5);
-      // Subtle FOV kick tied to REAL jump velocity (desktop only; FOV changes are
-      // uncomfortable and unsupported in XR).
-      const peak = nav.jumpPeakSpeed;
-      const norm = peak > 0 ? THREE.MathUtils.clamp(nav.speedUnits / peak, 0, 1) : 0;
+      // Subtle FOV kick tied to REAL jump velocity (desktop only, and only while
+      // actually warping; FOV changes are uncomfortable and unsupported in XR).
+      const peak = Math.max(nav.jumpPeakSpeed, 1e-6);
+      const norm = app.mode === "desktop" && nav.jumpState === "warping"
+        ? THREE.MathUtils.clamp(nav.worldSpeed / peak, 0, 1)
+        : 0;
       const targetFov = 70 * (app.mode === "desktop" ? 1 + 0.14 * norm : 1);
       if (Math.abs(app.camera.fov - targetFov) > 0.05) {
         app.camera.fov += (targetFov - app.camera.fov) * Math.min(1, dt * 4);
         app.camera.updateProjectionMatrix();
       }
-      // Audio engine follows real velocity (hum rises as stars genuinely stream past).
-      audio.updateEngine(nav.speedUnits, nav.thrustInput.lengthSq() > 0 || nav.braking || nav.jumpState === "warping");
+      // Audio engine follows real eased motion (hum rises as stars genuinely stream past).
+      audio.updateEngine(nav.speedUnits, nav.thrustInput.lengthSq() > 0 || nav.jumpState === "warping");
       hud.update(dt);
     },
   });
@@ -276,15 +364,19 @@ async function boot() {
       if (!ok) {
         $("hud-hint").textContent = "XR session failed to start — staying in desktop mode";
       } else {
+        dust?.setXRMode(true);
         wrist.attach(xr.grips[0] ?? app.rig);
-        hud.setHint(mode === "vr" ? "VR: sticks to move/turn · trigger thrust · A select · B jump · hold Y home" : "AR: universe in your room · skybox off (toggle in LAYERS)");
+        hud.setHint(mode === "vr"
+          ? "VR: left stick fly · right stick turn/zoom · grip grab · trigger select · B jump · hold Y home"
+          : "AR: universe in your room · skybox off (toggle in LAYERS)");
       }
     } else {
-      hud.setHint("Click to capture mouse · WASD fly · Shift thrust · Space brake · J jump · ⌂ home · H help");
+      hud.setHint("Click to capture mouse · WASD move · scroll zoom · Space stop · J jump · ⌂ home · H help");
     }
     applyLayers(); // skybox visibility depends on mode (off in AR)
   };
   app.onSessionEnd = () => {
+    dust?.setXRMode(false);
     hud.setHint("Session ended — desktop mode. Click to capture mouse.");
     applyLayers();
   };
@@ -296,8 +388,8 @@ async function boot() {
     landing.choose(forced);
   }
 
-  // Start just outside Earth's orbit, looking back toward the Sun (−z).
-  app.rig.position.copy(HOME_POS);
+  // Start hovering just off Earth in the museum solar system (Navigation constructor
+  // already placed the universe at HOME_UNI/HOME_LOG — the user never moves).
 
   // Test/debug hooks (used by scripts/smoke-test.mjs).
   (window as unknown as { __cosmos: object }).__cosmos = { app, nav, selection, settings, THREE };

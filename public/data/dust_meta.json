@@ -1,0 +1,29 @@
+{
+  "source": "Leike & Ensslin / Lallement 3D dust maps (via sb2580/k3d_dust k3d snapshot)",
+  "url": "https://raw.githubusercontent.com/sb2580/k3d_dust/main/index.html",
+  "shape_zyx": [
+    81,
+    201,
+    201
+  ],
+  "extent_pc": {
+    "x": [
+      -1000,
+      1000
+    ],
+    "y": [
+      -1000,
+      1000
+    ],
+    "z": [
+      -400,
+      400
+    ]
+  },
+  "frame": "Galactic Cartesian, Sun at origin, +X to Galactic Center, +Z to N gal pole",
+  "encoding": "uint8 log-scale: density = vmin*pow(vmax/vmin, value/255)",
+  "vmin": 0.02,
+  "vmax": 79.81450653076172,
+  "units": "relative extinction density",
+  "license": "Leike & Ensslin 2020 / Lallement et al. dust maps \u2014 cite the underlying papers"
+}

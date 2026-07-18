@@ -14,6 +14,28 @@ export function radecToVec(raDeg: number, decDeg: number, dist: number, out = ne
   return out.set(dist * cd * Math.cos(ra), dist * Math.sin(dec), dist * cd * Math.sin(ra));
 }
 
+/**
+ * Rotation taking GALACTIC Cartesian coordinates into our equatorial J2000 frame.
+ * This is Rᵀ where R is the standard J2000 equatorial→galactic rotation used by the
+ * Milky Way Atlas data pipeline. The dust volume (galactic cube) is mounted under a
+ * group carrying this quaternion, so no resampling of the 3D texture is needed.
+ */
+export const GALACTIC_TO_EQUATORIAL_Q = (() => {
+  const R = [
+    -0.0548755604, -0.8734370902, -0.4838350155,
+    0.4941094279, -0.4448296300, 0.7469822445,
+    -0.8676661490, -0.1980763734, 0.4559837762,
+  ];
+  // Row-major R; transpose = inverse (orthonormal).
+  const m = new THREE.Matrix4().set(
+    R[0], R[3], R[6], 0,
+    R[1], R[4], R[7], 0,
+    R[2], R[5], R[8], 0,
+    0, 0, 0, 1,
+  );
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+})();
+
 /** Approximate blackbody/spectral color from B−V color index. */
 export function colorFromCI(ci: number, out = new THREE.Color()): THREE.Color {
   // Clamp B-V to a sane stellar range [-0.4, 2.0]

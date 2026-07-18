@@ -1,0 +1,1549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Milky Way Atlas — real 3D data</title>
+<style>
+  :root{
+    --bg:#04060b; --panel:rgba(9,13,21,.86); --line:rgba(150,180,220,.16);
+    --ink:#dbe4f0; --dim:#7d8ba0; --dust:#ff9a3c; --gas:#6fd6ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.5 "IBM Plex Mono","SF Mono",Menlo,Consolas,monospace;overflow:hidden}
+  canvas{display:block}
+
+  #hud{position:fixed;top:14px;left:14px;width:296px;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:14px 16px;backdrop-filter:blur(10px);z-index:10}
+  #hud h1{margin:0 0 2px;font-size:15px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+  #hud .sub{color:var(--dim);font-size:11px;margin-bottom:10px}
+  #hud .sub b{color:var(--dust);font-weight:600}
+  .presets{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  #dests .preset{flex:1 1 28%;font-size:9.5px;padding:5px 0;color:#a9b7cc}
+  .preset{flex:1;border:1px solid var(--line);background:transparent;color:var(--dim);font:inherit;
+    font-size:10.5px;padding:6px 0;border-radius:6px;cursor:pointer;letter-spacing:.04em;text-transform:uppercase}
+  .preset.on{color:var(--ink);border-color:var(--gas);box-shadow:inset 0 0 0 1px var(--gas)}
+  .row{display:flex;align-items:center;gap:8px;margin:6px 0}
+  .row label{flex:0 0 84px;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .row input[type=range]{flex:1;accent-color:var(--dust);height:3px}
+  .row output{flex:0 0 44px;text-align:right;font-size:11px;color:var(--ink)}
+  .toggles{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap}
+  .tgl{border:1px solid var(--line);background:transparent;color:var(--dim);
+    font:inherit;font-size:10.5px;padding:4px 8px;border-radius:6px;cursor:pointer;letter-spacing:.04em}
+  .tgl.on{color:var(--ink);border-color:var(--dust);box-shadow:inset 0 0 0 1px var(--dust)}
+  #credits{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);color:var(--dim);font-size:10px}
+
+  #xrbar{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:flex;gap:10px;z-index:10}
+  .xrbtn{border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;
+    font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:11px 20px;border-radius:999px;
+    cursor:pointer;backdrop-filter:blur(10px)}
+  .xrbtn:hover{border-color:var(--gas)}
+  .xrbtn[disabled]{opacity:.35;cursor:default}
+  .xrbtn .k{color:var(--dust);margin-right:6px}
+
+  #status{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:12px;background:var(--bg);z-index:20;transition:opacity .5s}
+  #status.hide{opacity:0;pointer-events:none}
+  #status .t{letter-spacing:.2em;text-transform:uppercase;color:var(--dim);font-size:12px}
+  #bar{width:220px;height:2px;background:var(--line)}
+  #bar i{display:block;height:100%;width:0;background:var(--dust);transition:width .2s}
+  #err{max-width:440px;color:#ff7d7d;font-size:12px;text-align:center;display:none;line-height:1.7}
+
+  #help{position:fixed;right:14px;bottom:14px;color:var(--dim);font-size:10.5px;text-align:right;z-index:5;line-height:1.7}
+  @media (max-width:640px){ #hud{width:calc(100% - 28px)} #help{display:none} }
+</style>
+</head>
+<body>
+
+<div id="status">
+  <div class="t">Loading the galaxy</div>
+  <div id="bar"><i></i></div>
+  <div id="err"></div>
+</div>
+
+<div id="hud">
+  <h1>Milky Way Atlas</h1>
+  <div class="sub">All objects at <b>measured</b> 3D positions<br>dust · 60k stars · Cepheids · clusters · galaxies</div>
+  <div class="presets">
+    <button class="preset on" data-s="-3.1">Clouds<br>2 kpc</button>
+    <button class="preset" data-s="-4.75">Galaxy<br>40 kpc</button>
+    <button class="preset" data-s="-6.05">Local Grp<br>2 Mpc</button>
+  </div>
+  <div class="presets" id="dests">
+    <button class="preset" data-d="solar">Solar<br>system</button>
+    <button class="preset" data-d="orion">Orion<br>clouds</button>
+    <button class="preset" data-d="sgra">Sgr A*<br>centre</button>
+    <button class="preset" data-d="omcen">ω Cen<br>cluster</button>
+    <button class="preset" data-d="lmc">LMC<br>galaxy</button>
+    <button class="preset" data-d="m31">M31<br>2.5 Mly</button>
+  </div>
+  <div class="row"><label>Density</label><input id="uDensity" type="range" min="0.1" max="6" step="0.05" value="1.6"><output>1.6</output></div>
+  <div class="row"><label>Threshold</label><input id="uCut" type="range" min="0" max="0.7" step="0.01" value="0.22"><output>0.22</output></div>
+  <div class="row"><label>Quality</label><input id="uSteps" type="range" min="24" max="220" step="4" value="110"><output>110</output></div>
+  <div class="row"><label>Exposure</label><input id="uStars" type="range" min="0" max="3" step="0.05" value="1"><output>1.0</output></div>
+  <div class="row"><label>Limit mag</label><input id="uLim" type="range" min="3" max="14" step="0.1" value="6.5"><output>6.5</output></div>
+  <div class="row"><label>Gal. glow</label><input id="uGal" type="range" min="0.5" max="30" step="0.1" value="6"><output>6.0</output></div>
+  <div class="row"><label>Scale</label><input id="uScale" type="range" min="-7.3" max="5.7" step="0.01" value="-3.1"><output></output></div>
+  <div class="toggles">
+    <button class="tgl on" id="tLabels">Labels</button>
+    <button class="tgl on" id="tNames">Star names</button>
+    <button class="tgl" id="tMeasure">Measure</button>
+    <button class="tgl on" id="tGrid">Plane</button>
+    <button class="tgl" id="tCyl">Cyl grid</button>
+    <button class="tgl on" id="tCeph">Cepheids</button>
+    <button class="tgl on" id="tGC">Globulars</button>
+    <button class="tgl on" id="tGal">Galaxies</button>
+    <button class="tgl on" id="tDust">Dust</button>
+    <button class="tgl on" id="tStars">Stars</button>
+    <button class="tgl on" id="tSolar">Solar sys</button>
+    <button class="tgl on" id="tFace">Face view</button>
+    <button class="tgl" id="tObs">Observed sky</button>
+    <button class="tgl" id="tConst">Constellations</button>
+  </div>
+  <div id="credits">Dust: Leike/Lallement Gaia maps · Stars: HYG v4.1 (physical brightness, Sun included at true luminosity) · Disk: Skowron+2019 Cepheids · Halo: Harris/LVDB globulars · Galaxies: Local Volume Database. Point at a star to see its name.</div>
+</div>
+
+<div id="help">
+  desktop — drag orbit · scroll zoom · hover for star names · measure: click two objects<br>
+  quest controllers — grip: grab · both grips: scale/rotate · trigger: measure point<br>
+  quest hands — pinch: grab · both hands pinch: stretch/turn · pinch (measure on): pick<br>
+  left stick: fly · right stick: turn / scale
+</div>
+
+<div id="xrbar">
+  <button class="xrbtn" id="btnVR" disabled><span class="k">VR</span>Enter space</button>
+  <button class="xrbtn" id="btnAR" disabled><span class="k">MR</span>Passthrough</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+
+/* ---------------- loading ---------------- */
+const bar = document.querySelector('#bar i');
+let loaded = 0; const TOTAL = 11;
+const tick = r => { loaded++; bar.style.width = (loaded/TOTAL*100)+'%'; return r; };
+const j = u => fetch(u).then(r=>{ if(!r.ok) throw new Error(u+' → '+r.status); return r.json(); }).then(tick);
+const b = u => fetch(u).then(r=>{ if(!r.ok) throw new Error(u+' → '+r.status); return r.arrayBuffer(); }).then(tick);
+let meta, markers, mwLm, lgLm, starNames, galaxies, consts, dustBuf, starBuf, cephBuf, gcBuf;
+try{
+  [meta, markers, mwLm, lgLm, starNames, galaxies, consts, dustBuf, starBuf, cephBuf, gcBuf] = await Promise.all([
+    j('data/dust_meta.json'), j('data/markers.json'), j('data/mw_landmarks.json'),
+    j('data/lg_landmarks.json'), j('data/starnames.json'), j('data/galaxies.json'), j('data/constellations.json'),
+    b('data/dust.bin'), b('data/stars.bin'), b('data/cepheids.bin'), b('data/globulars.bin'),
+  ]);
+}catch(e){
+  const err = document.getElementById('err');
+  err.style.display='block';
+  err.innerHTML = 'Could not load the data files.<br>'+e.message+
+    '<br><br>Serve this folder over HTTP, e.g.<br><b>python3 -m http.server</b> — opening index.html directly from disk will not work.';
+  throw e;
+}
+
+/* ---------------- renderer / scene ---------------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x04060b, 1);
+renderer.xr.enabled = true;
+renderer.xr.setFoveation(0.7);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.02, 5e8);
+camera.position.set(0, 1.55, 1.9);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.25, -0.6);
+controls.enableDamping = true;
+
+/* model group: children live in PARSECS, group scale = metres per parsec */
+const model = new THREE.Group();
+model.position.set(0, 1.25, -0.6);
+model.rotation.x = -Math.PI/2;   // galactic +Z (N gal pole) → room up
+scene.add(model);
+
+const DIM = { x:201, y:201, z:81 };
+const EXT = { x:2000, y:2000, z:800 };
+
+/* projection factor for physical point sizes: px = worldSize/dist * uProjH */
+const projU = { uProjH:{ value: 1 } };
+function updateProj(){
+  const h = renderer.xr.isPresenting ? 1400 : innerHeight*renderer.getPixelRatio();
+  projU.uProjH.value = h/2 / Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+}
+updateProj();
+
+/* ---------------- dust volume (real Leike/Lallement cube) ---------------- */
+const tex = new THREE.Data3DTexture(new Uint8Array(dustBuf), DIM.x, DIM.y, DIM.z);
+tex.format = THREE.RedFormat;
+tex.type = THREE.UnsignedByteType;
+tex.minFilter = tex.magFilter = THREE.LinearFilter;
+tex.unpackAlignment = 1;
+tex.needsUpdate = true;
+
+const volUniforms = {
+  uMap:{ value: tex }, uSteps:{ value: 110 },
+  uDensity:{ value: 1.6 }, uCut:{ value: 0.22 },
+};
+const volMat = new THREE.ShaderMaterial({
+  uniforms: volUniforms,
+  glslVersion: THREE.GLSL3,
+  transparent: true, depthWrite: false, side: THREE.BackSide,
+  vertexShader: `
+    out vec3 vOrigin; out vec3 vDir;
+    void main(){
+      mat4 invMV = inverse(modelViewMatrix);
+      vOrigin = (invMV * vec4(0.0,0.0,0.0,1.0)).xyz;
+      vDir = position - vOrigin;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    precision highp float;
+    precision highp sampler3D;
+    in vec3 vOrigin; in vec3 vDir;
+    out vec4 fragColor;
+    uniform sampler3D uMap;
+    uniform float uSteps, uDensity, uCut;
+    vec2 boxHit(vec3 ro, vec3 rd){
+      vec3 inv = 1.0/rd;
+      vec3 t0 = (vec3(-0.5)-ro)*inv, t1 = (vec3(0.5)-ro)*inv;
+      vec3 tmin = min(t0,t1), tmax = max(t0,t1);
+      return vec2(max(max(tmin.x,tmin.y),tmin.z), min(min(tmax.x,tmax.y),tmax.z));
+    }
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233)))*43758.5453); }
+    vec3 ramp(float t){
+      vec3 c1 = vec3(0.055,0.10,0.28), c2 = vec3(0.10,0.42,0.55);
+      vec3 c3 = vec3(0.98,0.52,0.16),  c4 = vec3(1.00,0.93,0.80);
+      if(t < 0.45) return mix(c1,c2, t/0.45);
+      if(t < 0.78) return mix(c2,c3,(t-0.45)/0.33);
+      return mix(c3,c4,(t-0.78)/0.22);
+    }
+    void main(){
+      vec3 rd = normalize(vDir);
+      vec2 hit = boxHit(vOrigin, rd);
+      if(hit.x > hit.y) discard;
+      float t = max(hit.x, 0.0), tEnd = hit.y, n = uSteps;
+      float dt = 1.74 / n;
+      t += dt * hash(gl_FragCoord.xy);
+      vec3 acc = vec3(0.0); float alpha = 0.0;
+      for(int i=0;i<256;i++){
+        if(t > tEnd || alpha > 0.985 || float(i) >= n) break;
+        vec3 p = vOrigin + rd*t + 0.5;
+        float s = texture(uMap, p).r;
+        float d = smoothstep(uCut, 1.0, s);
+        if(d > 0.001){
+          float a = 1.0 - exp(-d*d * uDensity * dt * 60.0);
+          acc += (1.0-alpha) * a * ramp(d) * (0.35 + 1.9*d);
+          alpha += (1.0-alpha) * a;
+        }
+        t += dt;
+      }
+      if(alpha < 0.003) discard;
+      fragColor = vec4(acc, alpha);
+    }`
+});
+const volMesh = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), volMat);
+volMesh.scale.set(EXT.x, EXT.y, EXT.z);
+volMesh.renderOrder = 10;
+model.add(volMesh);
+
+const frame = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(EXT.x, EXT.y, EXT.z)),
+  new THREE.LineBasicMaterial({ color:0x3d5f8a, transparent:true, opacity:0.6, blending:THREE.AdditiveBlending }));
+model.add(frame);
+
+const grid2k = new THREE.GridHelper(2000, 20, 0x24405e, 0x14263c);
+grid2k.rotation.x = Math.PI/2;
+grid2k.material.transparent = true; grid2k.material.opacity = 0.5; grid2k.material.blending = THREE.AdditiveBlending;
+model.add(grid2k);
+
+const grid60k = new THREE.GridHelper(60000, 12, 0x24405e, 0x14263c);
+grid60k.rotation.x = Math.PI/2;
+grid60k.position.set(8178, 0, 0);           // centred on the Galactic centre
+grid60k.material.transparent = true; grid60k.material.opacity = 0.4; grid60k.material.blending = THREE.AdditiveBlending;
+model.add(grid60k);
+
+/* ---------------- point shaders ---------------- */
+/* Stars: physically consistent — brightness ∝ luminosity / distance²   */
+const starVert = `
+  attribute float psize; attribute vec3 color;
+  varying vec3 vC; varying float vA;
+  uniform float uBright, uK, uProjH, uMaxPx;
+  uniform float uMode, uLim, uExpo;
+  uniform vec3 uEye;
+  void main(){
+    vC = color;
+    vec4 mv = modelViewMatrix * vec4(position,1.0);
+    float d = max(-mv.z, 1e-6);
+    float s;
+    if(uMode > 0.5){
+      /* OBSERVED mode: apparent magnitude from the vantage point (inverse-square),
+         like the night sky — not scaled-model flux */
+      float L = pow(psize, 3.5714286);                    // psize stores L^0.28
+      float D = max(distance(position, uEye), 0.02);      // parsecs
+      float m = -2.5*log(L)/log(10.0) + 5.0*log(D)/log(10.0) - 5.0;
+      float b = pow(10.0, 0.4*(uLim - m));                // 1.0 at the visibility limit
+      s = 1.15 * pow(max(b, 0.0), 0.23) * uExpo;          // eye-like compression (dimmer overall)
+      vA = clamp(s*0.45, 0.0, 1.0) * 0.8;
+      gl_PointSize = clamp(s, 0.0, uMaxPx*1.1);
+      if(b < 1.0) gl_PointSize = 0.0;                     // fainter than the limit: invisible
+    }else{
+      s = psize * uBright * uK / d;                       // scaled-model flux (default)
+      vA = clamp(s, 0.0, 1.0) * 0.75;
+      gl_PointSize = clamp(s, 1.2, uMaxPx);
+    }
+    gl_Position = projectionMatrix * mv;
+  }`;
+const starFrag = `
+  varying vec3 vC; varying float vA;
+  void main(){
+    vec2 q = gl_PointCoord - 0.5;
+    float r = length(q)*2.0;
+    float a = exp(-r*r*4.5) * vA;
+    if(a < 0.02) discard;
+    gl_FragColor = vec4(vC*1.5, a);
+  }`;
+function pointsMat(k, maxPx){
+  return new THREE.ShaderMaterial({
+    uniforms: { uBright:{value:1}, uK:{value:k}, uMaxPx:{value:maxPx}, uProjH:projU.uProjH,
+                uMode:{value:0}, uLim:{value:6.5}, uExpo:{value:1}, uEye:{value:new THREE.Vector3()} },
+    vertexShader: starVert, fragmentShader: starFrag,
+    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending });
+}
+
+function bvToRGB(bv, out){
+  const t = 4600*(1/(0.92*bv+1.7)+1/(0.92*bv+0.62));
+  let u = t/100, r, g, bl;
+  r  = u<=66 ? 255 : 329.7*Math.pow(u-60,-0.1332);
+  g  = u<=66 ? 99.47*Math.log(u)-161.12 : 288.12*Math.pow(u-60,-0.0755);
+  bl = u>=66 ? 255 : (u<=19 ? 0 : 138.52*Math.log(u-10)-305.04);
+  out.setRGB(Math.min(255,Math.max(0,r))/255, Math.min(255,Math.max(0,g))/255, Math.min(255,Math.max(0,bl))/255);
+}
+
+/* HYG stars + the Sun at its true luminosity (absolute magnitude 4.83) */
+const sf = new Float32Array(starBuf);
+const N = sf.length/5;
+const pos = new Float32Array((N+1)*3), col = new Float32Array((N+1)*3), siz = new Float32Array(N+1);
+const tmpc = new THREE.Color();
+for(let i=0;i<N;i++){
+  const x=sf[i*5], y=sf[i*5+1], z=sf[i*5+2], mag=sf[i*5+3], ci=sf[i*5+4];
+  pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+  const d = Math.max(Math.hypot(x,y,z), 1);
+  const absM = mag - 5*Math.log10(d/10);
+  siz[i] = Math.pow(Math.pow(10, -0.4*absM), 0.28);   // L^0.28 — eye-like compression
+  bvToRGB(ci, tmpc);
+  col[i*3]=tmpc.r; col[i*3+1]=tmpc.g; col[i*3+2]=tmpc.b;
+}
+pos[N*3]=0; pos[N*3+1]=0; pos[N*3+2]=0;          // the Sun — just another G star
+siz[N] = Math.pow(Math.pow(10,-0.4*4.83), 0.28);      // the Sun, true luminosity
+bvToRGB(0.65, tmpc); col[N*3]=tmpc.r; col[N*3+1]=tmpc.g; col[N*3+2]=tmpc.b;
+
+const starGeo = new THREE.BufferGeometry();
+starGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+starGeo.setAttribute('color',    new THREE.BufferAttribute(col,3));
+starGeo.setAttribute('psize',    new THREE.BufferAttribute(siz,1));
+const starMat = pointsMat(2.1, 20);
+const stars = new THREE.Points(starGeo, starMat);
+stars.renderOrder = 1;
+model.add(stars);
+
+
+/* Cepheids (Skowron+2019): the measured shape of the whole disk, incl. the warp */
+const cf = new Float32Array(cephBuf); const NC = cf.length/4;
+const cpos = new Float32Array(NC*3), ccol = new Float32Array(NC*3), csiz = new Float32Array(NC);
+const young = new THREE.Color(0x9fc8ff), old = new THREE.Color(0xffb36b);
+for(let i=0;i<NC;i++){
+  cpos[i*3]=cf[i*4]; cpos[i*3+1]=cf[i*4+1]; cpos[i*3+2]=cf[i*4+2];
+  const age = cf[i*4+3];
+  const t = THREE.MathUtils.clamp(Math.log10(age/20)/Math.log10(20), 0, 1);
+  tmpc.copy(young).lerp(old, t);
+  ccol[i*3]=tmpc.r; ccol[i*3+1]=tmpc.g; ccol[i*3+2]=tmpc.b;
+  csiz[i] = Math.pow(Math.pow(10,-0.4*(-4.2)), 0.28);   // Cepheids: supergiants, M≈−4
+}
+const cephGeo = new THREE.BufferGeometry();
+cephGeo.setAttribute('position', new THREE.BufferAttribute(cpos,3));
+cephGeo.setAttribute('color',    new THREE.BufferAttribute(ccol,3));
+cephGeo.setAttribute('psize',    new THREE.BufferAttribute(csiz,1));
+const ceph = new THREE.Points(cephGeo, pointsMat(2.1, 6));
+ceph.renderOrder = 1;
+model.add(ceph);
+
+/* Globular clusters (Harris/LVDB): the galactic halo */
+const gf = new Float32Array(gcBuf); const NG = gf.length/4;
+const gpos = new Float32Array(NG*3), gcol = new Float32Array(NG*3), gsiz = new Float32Array(NG);
+tmpc.set(0xffe3b0);
+for(let i=0;i<NG;i++){
+  gpos[i*3]=gf[i*4]; gpos[i*3+1]=gf[i*4+1]; gpos[i*3+2]=gf[i*4+2];
+  gcol[i*3]=tmpc.r; gcol[i*3+1]=tmpc.g; gcol[i*3+2]=tmpc.b;
+  const MV = gf[i*4+3];
+  gsiz[i] = Math.pow(Math.pow(10,-0.4*Math.max(MV,-11)), 0.28);
+}
+const gcGeo = new THREE.BufferGeometry();
+gcGeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
+gcGeo.setAttribute('color',    new THREE.BufferAttribute(gcol,3));
+gcGeo.setAttribute('psize',    new THREE.BufferAttribute(gsiz,1));
+const gcs = new THREE.Points(gcGeo, pointsMat(1.6, 8));
+gcs.renderOrder = 1;
+model.add(gcs);
+
+/* Galaxies: measured half-light size + measured ellipticity & position angle,
+   rendered as oriented core+envelope profiles (not flat patches) */
+const NL = galaxies.length;
+const lpos=new Float32Array(NL*3), lsiz=new Float32Array(NL), lalp=new Float32Array(NL),
+      lell=new Float32Array(NL), lang=new Float32Array(NL), lcol=new Float32Array(NL*3);
+{ const c=new THREE.Color();
+for(let i=0;i<NL;i++){
+  const g=galaxies[i];
+  lpos[i*3]=g.pos[0]; lpos[i*3+1]=g.pos[1]; lpos[i*3+2]=g.pos[2];
+  lsiz[i]=g.rh*2;
+  lalp[i]=THREE.MathUtils.clamp(0.16+(-g.MV-7)*0.05,0.10,0.9);
+  lell[i]=g.ell??0.25;
+  lang[i]=((g.pa??0))*Math.PI/180;
+  /* bright majors slightly blue-white (star-forming disks), faint dwarfs warm (old stars) */
+  const t=THREE.MathUtils.clamp((-g.MV-8)/12,0,1);
+  c.setRGB(1.0, 0.93-0.05*(1-t), 0.82+0.14*t);
+  lcol[i*3]=c.r; lcol[i*3+1]=c.g; lcol[i*3+2]=c.b;
+} }
+const galGeo=new THREE.BufferGeometry();
+galGeo.setAttribute('position', new THREE.BufferAttribute(lpos,3));
+galGeo.setAttribute('psize',    new THREE.BufferAttribute(lsiz,1));
+galGeo.setAttribute('alp',      new THREE.BufferAttribute(lalp,1));
+galGeo.setAttribute('ell',      new THREE.BufferAttribute(lell,1));
+galGeo.setAttribute('ang',      new THREE.BufferAttribute(lang,1));
+galGeo.setAttribute('gcol',     new THREE.BufferAttribute(lcol,3));
+const galMat=new THREE.ShaderMaterial({
+  uniforms:{ uBright:{value:1}, uMinPx:{value:2}, uProjH:projU.uProjH },
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+  vertexShader:`
+    attribute float psize; attribute float alp; attribute float ell; attribute float ang; attribute vec3 gcol;
+    varying float vA; varying float vE; varying float vAng; varying vec3 vCol;
+    uniform float uProjH, uBright, uMinPx;
+    void main(){
+      vec4 mv = modelViewMatrix * vec4(position,1.0);
+      float d = max(-mv.z, 1e-6);
+      float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
+      float px = psize * mscale / d * uProjH;
+      vA = clamp(alp * uBright * clamp(px/2.0, 0.3, 1.4), 0.0, 1.0);
+      vE = ell; vAng = ang; vCol = gcol;
+      gl_PointSize = clamp(px*1.6, uMinPx, 500.0);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader:`
+    varying float vA; varying float vE; varying float vAng; varying vec3 vCol;
+    void main(){
+      vec2 q = gl_PointCoord - 0.5;
+      float ca = cos(vAng), sa = sin(vAng);
+      vec2 r = vec2(q.x*ca - q.y*sa, q.x*sa + q.y*ca);   // rotate by position angle
+      r.y /= max(1.0 - vE, 0.18);                        // measured flattening
+      float rr = dot(r,r)*4.0;
+      float core = exp(-rr*9.0);                          // concentrated core
+      float env  = exp(-rr*1.7);                          // faint envelope
+      float a = (0.62*core + 0.38*env) * vA;
+      if(a < 0.012) discard;
+      gl_FragColor = vec4(vCol*(1.1+1.6*core), a);
+    }`
+});
+const gals = new THREE.Points(galGeo, galMat);
+gals.renderOrder = 1;
+model.add(gals);
+
+/* ---------------- labels ---------------- */
+const labelGroups = [];
+const allLabels = [];
+let billboardOn = true;
+const _camPL = new THREE.Vector3();
+function orientLabels(force){
+  if(!billboardOn && !force) return;
+  (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera).getWorldPosition(_camPL);
+  for(const L of allLabels) L.lookAt(_camPL);
+}
+function makeLabel(txt, sub, colr, small){
+  const c=document.createElement('canvas'), g=c.getContext('2d');
+  const f1 = small? '600 36px "IBM Plex Mono", monospace' : '600 46px "IBM Plex Mono", monospace';
+  g.font=f1; const w1=g.measureText(txt).width;
+  g.font='26px "IBM Plex Mono", monospace';
+  const w2=sub?g.measureText(sub).width:0;
+  c.width=Math.ceil(Math.max(w1,w2))+24; c.height=sub?96:(small?48:58);
+  const draw=(fill,font,t,y)=>{ g.font=font; g.lineWidth=7; g.lineJoin='round';
+    g.strokeStyle='rgba(3,6,12,0.88)'; g.strokeText(t,12,y); g.fillStyle=fill; g.fillText(t,12,y); };
+  draw(colr, f1, txt, small?36:44);
+  if(sub) draw('#9db0ca','26px "IBM Plex Mono", monospace', sub, 84);
+  const t=new THREE.CanvasTexture(c); t.anisotropy=4;
+  const aspect=c.width/c.height;
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(aspect,1),
+    new THREE.MeshBasicMaterial({ map:t, transparent:true, depthWrite:false, depthTest:false, side:THREE.DoubleSide }));
+  m.userData.aspect=1; m.userData.w=aspect; m.userData.isLabel=true;
+  m.renderOrder=20;
+  allLabels.push(m);
+  return m;
+}
+function labelGroupFrom(list, colr, zOffFrac, cap, min){
+  const grp = new THREE.Group();
+  grp.userData.cap = cap; grp.userData.min = min;
+  labelGroups.push(grp);
+  for(const mk of list){
+    const sp = makeLabel(mk.name, mk.desc, colr);
+    const zOff = Math.max(20, cap*0.14);
+    sp.position.set(mk.pos[0], mk.pos[1], mk.pos[2] + zOff*zOffFrac);
+    sp.userData.base = new THREE.Vector3(...mk.pos);
+    grp.add(sp);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(1,8,6),
+      new THREE.MeshBasicMaterial({ color:new THREE.Color(colr), transparent:true, opacity:.9 }));
+    dot.position.set(...mk.pos);
+    dot.userData.isDot = true;
+    grp.add(dot);
+  }
+  model.add(grp);
+  return grp;
+}
+const cloudLabels = labelGroupFrom(markers.markers, '#ff9a3c', 1, 380);
+const mwLabels    = labelGroupFrom(mwLm,           '#6fd6ff', 1, 9000);
+const lgLabels    = labelGroupFrom(lgLm.map(x=>({...x, desc:''})), '#c9a7ff', 1, 250000);
+
+function sizeLabels(){
+  const s = model.scale.x;
+  for(const grp of labelGroups){
+    const h0 = THREE.MathUtils.clamp(0.085/s, grp.userData.min||2, grp.userData.cap);
+    const Ls = grp.children.filter(o=>o.userData.isLabel);
+    for(const o of Ls){
+      let n=0;                                  /* shrink where labels crowd each other */
+      for(const p of Ls) if(p!==o && p.userData.base.distanceTo(o.userData.base) < h0*2.4) n++;
+      const h = h0/(1+0.42*Math.sqrt(n));
+      o.scale.set(h*o.userData.aspect, h, 1);
+      o.position.copy(o.userData.base); o.position.z += h*0.9;
+    }
+    for(const o of grp.children) if(o.userData.isDot)
+      o.scale.setScalar(THREE.MathUtils.clamp(0.004/s, (grp.userData.min||2)*0.25, grp.userData.cap*0.02));
+  }
+}
+
+
+/* constellations: real HIP-to-HIP segments in true 3D — familiar shapes from the Sun,
+   splaying into depth as you move */
+const cSegs = new Float32Array(consts.segs.length*6);
+consts.segs.forEach((sg,i)=>{ cSegs.set([...sg[0],...sg[1]], i*6); });
+const constLines = new THREE.LineSegments(
+  new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(cSegs,3)),
+  new THREE.LineBasicMaterial({ color:0x6fb8e8, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending }));
+constLines.renderOrder = 2; constLines.visible = false;
+model.add(constLines);
+const constLabels = labelGroupFrom(consts.names.map(n=>({name:n.name,pos:n.pos,desc:null})), '#7fb8e8', 1, 90);
+constLabels.visible = false;
+
+
+/* ---------------- cylindrical volume grids (rings × levels × verticals) ---------------- */
+function makeCylGrid(rings, centre, colr, labelCap, labelMin, halfH){
+  const grp = new THREE.Group();
+  grp.userData.rings = [];
+  const mat  = new THREE.LineBasicMaterial({ color:colr, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending });
+  const matF = new THREE.LineBasicMaterial({ color:colr, transparent:true, opacity:0.22, blending:THREE.AdditiveBlending });
+  const rMax = rings[rings.length-1][0];
+  for(const [r, txt] of rings){
+    for(const zl of [-halfH, 0, halfH]){
+      const pts=[];
+      for(let i=0;i<=128;i++){ const a=i/128*Math.PI*2;
+        pts.push(new THREE.Vector3(centre[0]+r*Math.cos(a), centre[1]+r*Math.sin(a), centre[2]+zl)); }
+      grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), zl===0?mat:matF));
+    }
+    const sp = makeLabel(txt, null, colr, true);
+    sp.material.opacity = 0.9;
+    sp.userData.base = new THREE.Vector3(centre[0]+r*Math.cos(0.42), centre[1]+r*Math.sin(0.42), centre[2]);
+    grp.add(sp); grp.userData.rings.push(sp);
+  }
+  for(let k=0;k<12;k++){
+    const a=k/12*Math.PI*2, cx=Math.cos(a), sy=Math.sin(a);
+    grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(centre[0],centre[1],centre[2]-halfH*0), new THREE.Vector3(centre[0]+rMax*cx, centre[1]+rMax*sy, centre[2])]), matF));
+    grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(centre[0]+rMax*cx, centre[1]+rMax*sy, centre[2]-halfH),
+      new THREE.Vector3(centre[0]+rMax*cx, centre[1]+rMax*sy, centre[2]+halfH)]), matF));
+  }
+  grp.userData.cap = labelCap; grp.userData.min = labelMin;
+  model.add(grp);
+  return grp;
+}
+const cylStellar = makeCylGrid(
+  [[250,'250 pc · 815 ly'],[500,'500 pc'],[750,'750 pc'],[1000,'1 kpc · 3260 ly']],
+  [0,0,0], '#5f8fc8', 120, 2, 300);
+const cylGalactic = makeCylGrid(
+  [[5000,'5 kpc'],[10000,'10 kpc'],[15000,'15 kpc'],[20000,'20 kpc · 65 kly'],[26000,'Sun orbit R≈8.2 kpc']],
+  [8178,0,-14], '#5f8fc8', 3500, 60, 1200);
+const cylLG = makeCylGrid(
+  [[3e5,'300 kpc'],[1e6,'1 Mpc · 3.3 Mly'],[3e6,'3 Mpc'],[8e6,'8 Mpc'],[1.6e7,'16 Mpc · 52 Mly']],
+  [0,0,0], '#5f8fc8', 2.5e6, 4e4, 2.5e6);
+function sizeCylLabels(){
+  const s = model.scale.x;
+  for(const g of [cylStellar, cylGalactic, cylLG]){
+    const h = THREE.MathUtils.clamp(0.028/s, g.userData.min, g.userData.cap);
+    for(const sp of g.userData.rings){
+      sp.scale.set(h*sp.userData.aspect, h, 1);
+      sp.position.copy(sp.userData.base); sp.position.z += h*0.7;
+    }
+  }
+}
+let cylOn = false;
+
+/* ---------------- hover star names (regional, on demand) ---------------- */
+const nameLayer = new THREE.Group(); model.add(nameLayer);
+const nameCache = new Map();
+let namesOn = true;
+const mouse = new THREE.Vector2(2,2);
+addEventListener('pointermove', e=>{
+  mouse.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1);
+});
+const _ray = new THREE.Ray(), _inv = new THREE.Matrix4(), _w = new THREE.Vector3(), _rc = new THREE.Raycaster();
+function updateNames(){
+  for(const s of nameCache.values()) s.visible = false;
+  if(!namesOn) return;
+  /* build a ray in model space: mouse on desktop, right controller in XR */
+  if(renderer.xr.isPresenting){
+    let src = ctrls.find(c=>c.userData.hand==='right') || ctrls[0];
+    if(!src) return;
+    _ray.origin.setFromMatrixPosition(src.matrixWorld);
+    _w.set(0,0,-1).transformDirection(src.matrixWorld);
+    _ray.direction.copy(_w);
+  }else{
+    _rc.setFromCamera(mouse, camera);
+    _ray.copy(_rc.ray);
+  }
+  _inv.copy(model.matrixWorld).invert();
+  _ray.applyMatrix4(_inv);
+  /* rank named stars by angular distance from the ray */
+  const hits = [];
+  for(const st of starNames){
+    _w.set(st.p[0]-_ray.origin.x, st.p[1]-_ray.origin.y, st.p[2]-_ray.origin.z);
+    const t = _w.dot(_ray.direction);
+    if(t <= 0) continue;
+    const perp2 = _w.lengthSq() - t*t;
+    const ang = Math.sqrt(Math.max(perp2,0))/t;
+    if(ang < 0.05) hits.push([ang, st]);
+  }
+  hits.sort((a,b)=>a[0]-b[0]);
+  const s = model.scale.x;
+  const h = THREE.MathUtils.clamp(0.05/s, 1e-9, 300);
+  for(const [,st] of hits.slice(0,5)){
+    let sp = nameCache.get(st.n);
+    if(!sp){
+      sp = makeLabel(st.n, null, '#dbe4f0', true);
+      nameCache.set(st.n, sp);
+      nameLayer.add(sp);
+    }
+    sp.visible = true;
+    sp.scale.set(h*sp.userData.aspect, h, 1);
+    sp.position.set(st.p[0], st.p[1], st.p[2] + h*0.8);
+  }
+}
+
+
+/* ---------------- Solar System (real orbital elements, LOD-gated) ---------------- */
+const AU = 4.8481368e-6;                    // parsecs
+const DEG = Math.PI/180;
+/* ecliptic J2000 -> galactic rotation */
+const OB = 23.439281*DEG;
+const EQG = [ -0.0548755604,-0.8734370902,-0.4838350155,
+               0.4941094279,-0.4448296300, 0.7469822445,
+              -0.8676661490,-0.1980763734, 0.4559837762 ];
+function eclToGal(x,y,z){
+  const ye = y*Math.cos(OB)-z*Math.sin(OB), ze = y*Math.sin(OB)+z*Math.cos(OB);
+  return [ EQG[0]*x+EQG[1]*ye+EQG[2]*ze, EQG[3]*x+EQG[4]*ye+EQG[5]*ze, EQG[6]*x+EQG[7]*ye+EQG[8]*ze ];
+}
+const _eclQ = (()=>{                         // quaternion mapping ecliptic frame into model space
+  const ex=eclToGal(1,0,0), ez=eclToGal(0,0,1);
+  const m=new THREE.Matrix4().makeBasis(new THREE.Vector3(...ex),
+    new THREE.Vector3().crossVectors(new THREE.Vector3(...ez),new THREE.Vector3(...ex)),
+    new THREE.Vector3(...ez));
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+})();
+const JD = Date.now()/86400000 + 2440587.5;
+const Tcy = (JD - 2451545.0)/36525;
+function kepler(M, e){
+  M = ((M%(2*Math.PI))+2*Math.PI)%(2*Math.PI);
+  let E = e<0.8 ? M : Math.PI;
+  for(let i=0;i<20;i++){ E -= (E - e*Math.sin(E) - M)/(1 - e*Math.cos(E)); }
+  return E;
+}
+function orbPos(a,e,i,Om,w,M){              // -> ecliptic xyz in AU
+  const E = kepler(M,e);
+  const xv = a*(Math.cos(E)-e), yv = a*Math.sqrt(1-e*e)*Math.sin(E);
+  const cO=Math.cos(Om),sO=Math.sin(Om),cw=Math.cos(w),sw=Math.sin(w),ci=Math.cos(i),si=Math.sin(i);
+  return [ xv*(cw*cO-sw*sO*ci) + yv*(-sw*cO-cw*sO*ci),
+           xv*(cw*sO+sw*cO*ci) + yv*(-sw*sO+cw*cO*ci),
+           xv*(sw*si)          + yv*(cw*si) ];
+}
+/* JPL approximate elements 1800–2050 (Standish): a,e,I,L,varpi,Omega + rates/cy */
+const PLANETS = [
+ ['Mercury',0x9c9a92,[0.38709927,0.20563593,7.00497902,252.25032350,77.45779628,48.33076593],[0.00000037,0.00001906,-0.00594749,149472.67411175,0.16047689,-0.12534081]],
+ ['Venus',0xe6d3a8,[0.72333566,0.00677672,3.39467605,181.97909950,131.60246718,76.67984255],[0.00000390,-0.00004107,-0.00078890,58517.81538729,0.00268329,-0.27769418]],
+ ['Earth',0x6f9fe8,[1.00000261,0.01671123,-0.00001531,100.46457166,102.93768193,0.0],[0.00000562,-0.00004392,-0.01294668,35999.37244981,0.32327364,0.0]],
+ ['Mars',0xd8663f,[1.52371034,0.09339410,1.84969142,-4.55343205,-23.94362959,49.55953891],[0.00001847,0.00007882,-0.00813131,19140.30268499,0.44441088,-0.29257343]],
+ ['Jupiter',0xd9b48a,[5.20288700,0.04838624,1.30439695,34.39644051,14.72847983,100.47390909],[-0.00011607,-0.00013253,-0.00183714,3034.74612775,0.21252668,0.20469106]],
+ ['Saturn',0xe8d59f,[9.53667594,0.05386179,2.48599187,49.95424423,92.59887831,113.66242448],[-0.00125060,-0.00050991,0.00193609,1222.49362201,-0.41897216,-0.28867794]],
+ ['Uranus',0x9fd8d8,[19.18916464,0.04725744,0.77263783,313.23810451,170.95427630,74.01692503],[-0.00196176,-0.00004397,-0.00242939,428.48202785,0.40805281,0.04240589]],
+ ['Neptune',0x5f7fe8,[30.06992276,0.00859048,1.77004347,-55.12002969,44.96476227,131.78422574],[0.00026291,0.00005105,0.00035372,218.45945325,-0.32241464,-0.00508664]],
+ ['Pluto',0xc8b090,[39.48211675,0.24882730,17.14001206,238.92903833,224.06891629,110.30393684],[-0.00031596,0.00005170,0.00004818,145.20780515,-0.04062942,-0.01183482]],
+];
+/* minor bodies + comets: osculating elements [a,e,i,Om,w] + mean anomaly bookkeeping */
+const MINOR = [
+ ['Ceres',0xb8a890,2.767,0.0785,10.59,80.3,73.6,{M0:77.37,ep:2459000.5,P:1682}],
+ ['Vesta',0xb0a080,2.362,0.0889,7.14,103.8,151.2,{M0:20.86,ep:2459000.5,P:1325}],
+ ['Eris',0xd0d0e0,67.86,0.4418,44.04,35.95,151.29,{M0:206.0,ep:2459000.5,P:203830}],
+ ['Makemake',0xd8c8c0,45.43,0.161,28.98,79.62,294.83,{M0:165.5,ep:2459000.5,P:112897}],
+ ['Haumea',0xe0e0e0,43.18,0.191,28.21,121.9,239.0,{M0:218.0,ep:2459000.5,P:103660}],
+];
+const COMETS = [
+ ['1P/Halley',0x9fe8c8,17.834,0.96714,162.262,58.42,111.33,{Tp:2446467.4,P:27510}],
+ ['Hale-Bopp',0x9fe8c8,186.0,0.99511,89.43,282.47,130.59,{Tp:2450539.6,P:925000}],
+ ['67P/C-G',0x9fe8c8,3.4630,0.64102,7.0405,50.147,12.780,{Tp:2457247.6,P:2353}],
+];
+const solarGroup = new THREE.Group();
+model.add(solarGroup);
+const solarLbl = [];
+const VISR = { Mercury:0.09, Venus:0.16, Earth:0.16, Mars:0.12, Jupiter:0.42, Saturn:0.36,
+  Uranus:0.26, Neptune:0.26, Pluto:0.07, Ceres:0.06, Vesta:0.05, Eris:0.07, Makemake:0.06, Haumea:0.06 };
+const bodyMeshes = [];
+function addBody(name,color,eclAU,withLabel=true){
+  const g = eclToGal(eclAU[0],eclAU[1],eclAU[2]).map(v=>v*AU);
+  const r = (VISR[name]||0.05)*AU;
+  const isComet = name.includes('/') || name==='Hale-Bopp';
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14),
+    isComet ? new THREE.MeshBasicMaterial({ color })
+            : new THREE.MeshLambertMaterial({ color }));
+  m.position.set(g[0],g[1],g[2]);
+  solarGroup.add(m); bodyMeshes.push(m);
+  if(name==='Saturn'){
+    const ring = new THREE.Mesh(new THREE.RingGeometry(r*1.35, r*2.3, 48),
+      new THREE.MeshLambertMaterial({ color:0xcdb891, transparent:true, opacity:0.75, side:THREE.DoubleSide }));
+    ring.quaternion.copy(_eclQ);                       // near-ecliptic tilt, simplified
+    ring.rotateX(26.7*DEG);                            // Saturn's real ring tilt
+    m.add(ring);
+  }
+  if(isComet){                                          // dust tail points away from the Sun
+    const away = new THREE.Vector3(g[0],g[1],g[2]).normalize();
+    const tail = new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+      [new THREE.Vector3(0,0,0), away.clone().multiplyScalar(0.8*AU)]),
+      new THREE.LineBasicMaterial({ color:0x9fe8c8, transparent:true, opacity:0.6 }));
+    m.add(tail);
+  }
+  if(withLabel) solarLbl.push({name, pos:g, desc:null});
+}
+/* Sun: emissive sphere + real light source for planet day/night shading */
+const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(0.10*AU, 20, 14),
+  new THREE.MeshBasicMaterial({ color:0xffdf8a }));
+solarGroup.add(sunMesh);
+const sunLight = new THREE.PointLight(0xfff2d0, 2.2, 0, 0);
+solarGroup.add(sunLight);
+solarGroup.add(new THREE.AmbientLight(0x404860, 0.7));
+solarLbl.push({name:'Sun (body sizes exaggerated)', pos:[0,0,0], desc:null});
+function addOrbit(a,e,i,Om,w,color,op){
+  const pts=[];
+  for(let k=0;k<=180;k++){
+    const E=k/180*2*Math.PI;
+    const xv=a*(Math.cos(E)-e), yv=a*Math.sqrt(1-e*e)*Math.sin(E);
+    const cO=Math.cos(Om),sO=Math.sin(Om),cw=Math.cos(w),sw=Math.sin(w),ci=Math.cos(i),si=Math.sin(i);
+    const p=[ xv*(cw*cO-sw*sO*ci)+yv*(-sw*cO-cw*sO*ci),
+              xv*(cw*sO+sw*cO*ci)+yv*(-sw*sO+cw*cO*ci),
+              xv*(sw*si)+yv*(cw*si) ];
+    const gg=eclToGal(p[0],p[1],p[2]);
+    pts.push(new THREE.Vector3(gg[0]*AU, gg[1]*AU, gg[2]*AU));
+  }
+  solarGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color, transparent:true, opacity:op, blending:THREE.AdditiveBlending })));
+}
+for(const [name,color,el0,rt] of PLANETS){
+  const a=el0[0]+rt[0]*Tcy, e=el0[1]+rt[1]*Tcy, i=(el0[2]+rt[2]*Tcy)*DEG;
+  const L=(el0[3]+rt[3]*Tcy)*DEG, vp=(el0[4]+rt[4]*Tcy)*DEG, Om=(el0[5]+rt[5]*Tcy)*DEG;
+  const w=vp-Om, M=L-vp;
+  addBody(name,color,orbPos(a,e,i,Om,w,M));
+  addOrbit(a,e,i,Om,w,color,0.45);
+}
+for(const [name,color,a,e,i,Om,w,mk] of MINOR){
+  const M=(mk.M0 + 360*(JD-mk.ep)/mk.P)*DEG;
+  addBody(name,color,orbPos(a,e,i*DEG,Om*DEG,w*DEG,M), name==='Ceres'||name==='Eris');
+  addOrbit(a,e,i*DEG,Om*DEG,w*DEG,color,0.22);
+}
+for(const [name,color,a,e,i,Om,w,mk] of COMETS){
+  const M=(360*(((JD-mk.Tp)/mk.P)%1))*DEG;
+  addBody(name,color,orbPos(a,e,i*DEG,Om*DEG,w*DEG,M));
+  addOrbit(a,e,i*DEG,Om*DEG,w*DEG,color,0.3);
+}
+/* belts: measured region extents drawn as annuli in the ecliptic plane */
+function belt(r0,r1,color,op,label){
+  const geo = new THREE.RingGeometry(r0*AU, r1*AU, 96);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, side:THREE.DoubleSide, depthWrite:false }));
+  m.quaternion.copy(_eclQ);
+  solarGroup.add(m);
+  const mid=(r0+r1)/2, gg=eclToGal(mid*0.7071,mid*0.7071,0);
+  solarLbl.push({name:label, pos:[gg[0]*AU,gg[1]*AU,gg[2]*AU], desc:null});
+}
+belt(2.1,3.3,0xd8b088,0.07,'Asteroid belt 2.1–3.3 AU');
+belt(30,50,0x9fd0e8,0.05,'Kuiper belt 30–50 AU');
+/* heliosphere: Voyager/IBEX-measured boundaries, nose toward l≈5°, b≈+19° */
+const nose = new THREE.Vector3(...(()=>{const l=5*DEG,b=19*DEG;return [Math.cos(b)*Math.cos(l),Math.cos(b)*Math.sin(l),Math.sin(b)];})()).normalize();
+const noseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), nose);
+function glowMat(col, power, alpha){
+  return new THREE.ShaderMaterial({
+    transparent:true, depthWrite:false, side:THREE.DoubleSide, blending:THREE.AdditiveBlending,
+    uniforms:{ uC:{value:new THREE.Color(col)}, uP:{value:power}, uA:{value:alpha} },
+    vertexShader:`varying vec3 vN; varying vec3 vV;
+      void main(){ vec4 mv=modelViewMatrix*vec4(position,1.0);
+        vN=normalize(normalMatrix*normal); vV=normalize(-mv.xyz);
+        gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`varying vec3 vN; varying vec3 vV; uniform vec3 uC; uniform float uP,uA;
+      void main(){ float rim=pow(1.0-abs(dot(normalize(vN),normalize(vV))),uP);
+        gl_FragColor=vec4(uC*(0.35+rim*1.8), (0.06+rim)*uA); }`});
+}
+function shell(r, sz, zoff, op, col, partial){
+  const geo = partial ? new THREE.SphereGeometry(r*AU, 40, 20, 0, Math.PI*2, 0, 0.75)
+                      : new THREE.SphereGeometry(r*AU, 40, 26);
+  const m = new THREE.Mesh(geo, glowMat(col, 2.6, op*5.0));
+  m.quaternion.copy(noseQ);
+  if(sz) m.scale.set(sz[0],sz[1],sz[2]);
+  if(zoff) m.position.copy(nose).multiplyScalar(zoff*AU);
+  solarGroup.add(m);
+  return m;
+}
+shell(90, null, 0, 0.10, 0x6fb8d6, false);                       // termination shock ~90 AU (Voyager)
+shell(120, [1,1,1.9], -55, 0.08, 0x8fc8e8, false);               // heliopause ~120 AU, tail downwind
+shell(230, null, 0, 0.09, 0x9fd8f0, true);                       // bow wave ~230 AU
+solarLbl.push({name:'Termination shock ~90 AU', pos:nose.clone().multiplyScalar(90*AU).toArray(), desc:null});
+solarLbl.push({name:'Heliopause ~120 AU (Voyager)', pos:nose.clone().multiplyScalar(122*AU).toArray(), desc:null});
+solarLbl.push({name:'Bow wave ~230 AU (no shock — IBEX)', pos:nose.clone().multiplyScalar(232*AU).toArray(), desc:null});
+const solarLabels = labelGroupFrom(solarLbl, '#8fd8b8', 1, 1.2e-4, 1e-9);
+function sizeSolarLabels(){ /* handled by generic sizeLabels via labelGroups */ }
+solarGroup.visible = false; solarLabels.visible = false;
+
+/* ---------------- scale ---------------- */
+let logScale = -3.1, targetLog = -3.1;
+const scaleOut = document.querySelector('#uScale + output');
+const scaleSlider = document.getElementById('uScale');
+function fmtSpan(m){
+  return m>=1000 ? (m/1000).toFixed(1)+'km' : m>=1 ? m.toFixed(1)+'m' : (m*100).toFixed(0)+'cm';
+}
+function applyScale(){
+  const s = Math.pow(10, logScale);
+  model.scale.setScalar(s);
+  scaleOut.textContent = s>40 ? (4.8481368e-6*s*100).toFixed(1)+'cm/AU' : fmtSpan(EXT.x*s);
+  /* layer visibility by zoom level */
+  const cloudZone = s > 3e-5 && s < 40;
+  frame.visible = cloudZone && gridOn;
+  grid2k.visible  = cloudZone && gridOn && !cylOn;
+  grid60k.visible = !cloudZone && s > 3e-7 && gridOn && !cylOn;
+  cylStellar.visible  = cloudZone && gridOn && cylOn;
+  cylGalactic.visible = !cloudZone && s > 2.5e-6 && gridOn && cylOn;
+  cylLG.visible = s <= 2.5e-6 && gridOn && cylOn;
+  const so = k => solo===null || solo===k;
+  volMesh.visible = dustOn && so('dust');
+  stars.visible = starsOn && so('stars');
+  ceph.visible = cephOn && so('stars');
+  gcs.visible = gcOn && so('stars');
+  gals.visible = galOn && so('gal');
+  constLines.visible = constOn && so('stars');
+  constLabels.visible = constOn && labelsOn && so('stars') && s > 2e-5 && s < 40;
+  /* solar system: continuous rendering at every scale */
+  solarGroup.visible = solarOn && so('solar');
+  solarLabels.visible = labelsOn && mSolar && solarOn && so('solar') && s > 250;
+  /* flux assists: night sky stays visible inside the solar system, points stay
+     visible when zoomed far out (artificial enhancement, honestly labelled) */
+  const skyBoost = Math.max(1, Math.pow(s/1.5e-3, 0.9));
+  const farAssist = s < 1.5e-3 ? Math.min(6, Math.pow(1.5e-3/s, 0.24)) : 1;
+  starMat.uniforms.uBright.value = expo * Math.max(skyBoost, farAssist);
+  ceph.material.uniforms.uBright.value = expo * farAssist;
+  gcs.material.uniforms.uBright.value = expo * farAssist;
+  galMat.uniforms.uBright.value = expo * galBoost;
+  galMat.uniforms.uMinPx.value = 1.5 + galBoost*0.14;
+  cloudLabels.visible = labelsOn && mCloud && s > 2e-5 && s < 40;
+  mwLabels.visible    = labelsOn && mMW && s < 4e-4 && s > 2e-7;
+  lgLabels.visible    = labelsOn && mLG && s < 5e-6;
+  sizeLabels(); sizeCylLabels(); sizeSolarLabels();
+}
+let gridOn = true, labelsOn = true, expo = 1, galBoost = 6;
+let dustOn = true, starsOn = true, solarOn = true, mCloud = true, mMW = true, mLG = true, mSolar = true;
+let cephOn = true, gcOn = true, galOn = true, constOn = false, solo = null;
+let obsOn = false, limMag = 6.5;
+const _eyeW = new THREE.Vector3();
+function pointMats(){ return [starMat, ceph.material, gcs.material]; }
+function updateObserved(){
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  cam.getWorldPosition(_eyeW);
+  model.worldToLocal(_eyeW);                     // photons as they reach YOUR position
+  for(const m of pointMats()){
+    m.uniforms.uMode.value = obsOn ? 1 : 0;
+    m.uniforms.uLim.value = limMag;
+    m.uniforms.uExpo.value = expo;
+    m.uniforms.uEye.value.copy(_eyeW);
+  }
+}
+applyScale();
+
+/* ---------------- UI ---------------- */
+const bind = (id, fn) => {
+  const el = document.getElementById(id), out = el.nextElementSibling;
+  el.addEventListener('input', ()=>{ if(out&&id!=='uScale') out.textContent=(+el.value).toFixed(el.step<1?2:0); fn(+el.value); });
+};
+bind('uDensity', v=>volUniforms.uDensity.value=v);
+bind('uCut',     v=>volUniforms.uCut.value=v);
+bind('uSteps',   v=>volUniforms.uSteps.value=v);
+bind('uStars',   v=>{ expo=v; applyScale(); });
+bind('uGal',     v=>{ galBoost=v; applyScale(); });
+bind('uLim',     v=>{ limMag=v; });
+bind('uScale',   v=>{ logScale=v; targetLog=v; applyScale(); presetBtns.forEach(p=>p.classList.remove('on')); });
+const tgl=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ e.target.classList.toggle('on'); fn(e.target.classList.contains('on')); });
+tgl('tLabels', on=>{ labelsOn=on; applyScale(); });
+tgl('tNames',  on=>{ namesOn=on; });
+tgl('tGrid',   on=>{ gridOn=on; applyScale(); });
+tgl('tCyl',    on=>{ cylOn=on; applyScale(); drawPanel(); });
+tgl('tCeph',   on=>{ cephOn=on; applyScale(); });
+tgl('tGC',     on=>{ gcOn=on; applyScale(); });
+tgl('tGal',    on=>{ galOn=on; applyScale(); });
+tgl('tDust',   on=>{ dustOn=on; applyScale(); });
+tgl('tStars',  on=>{ starsOn=on; applyScale(); });
+tgl('tSolar',  on=>{ solarOn=on; applyScale(); });
+tgl('tFace',   on=>{ billboardOn=on; orientLabels(true); });
+tgl('tObs',    on=>{ obsOn=on; });
+tgl('tConst',  on=>{ constOn=on; applyScale(); });
+
+const presetBtns = [...document.querySelectorAll('.preset[data-s]')];
+presetBtns.forEach(btn=>btn.addEventListener('click', ()=>{
+  presetBtns.forEach(p=>p.classList.remove('on'));
+  btn.classList.add('on');
+  targetLog = +btn.dataset.s;
+}));
+
+/* ---------------- WebXR ---------------- */
+const btnVR = document.getElementById('btnVR');
+const btnAR = document.getElementById('btnAR');
+let currentSession = null;
+if(navigator.xr){
+  navigator.xr.isSessionSupported('immersive-vr').then(ok=>btnVR.disabled=!ok).catch(()=>{});
+  navigator.xr.isSessionSupported('immersive-ar').then(ok=>btnAR.disabled=!ok).catch(()=>{});
+}else{
+  btnVR.textContent='WebXR unavailable'; btnAR.style.display='none';
+}
+async function startXR(mode){
+  if(currentSession){ currentSession.end(); return; }
+  const session = await navigator.xr.requestSession(mode,
+    { optionalFeatures:['local-floor','bounded-floor','hand-tracking'] });
+  session.addEventListener('end', ()=>{
+    currentSession=null;
+    renderer.setClearAlpha(1);
+    btnVR.innerHTML='<span class="k">VR</span>Enter space';
+    btnAR.innerHTML='<span class="k">MR</span>Passthrough';
+    updateProj();
+  });
+  renderer.xr.setReferenceSpaceType('local-floor');
+  await renderer.xr.setSession(session);
+  currentSession = session;
+  if(mode==='immersive-ar') renderer.setClearAlpha(0);
+  (mode==='immersive-ar'?btnAR:btnVR).innerHTML='<span class="k">×</span>Exit';
+  setPose(0, 1.25, -1.0);
+  volUniforms.uSteps.value = Math.min(volUniforms.uSteps.value, 72);
+  document.getElementById('uSteps').value = volUniforms.uSteps.value;
+  document.querySelector('#uSteps + output').textContent = volUniforms.uSteps.value;
+  updateProj();
+}
+btnVR.onclick = ()=>startXR('immersive-vr');
+btnAR.onclick = ()=>startXR('immersive-ar');
+
+/* ---------------- measure tool (parsec / light-year) ---------------- */
+let measureOn = false;
+const pickables = [];
+for(const st of starNames) pickables.push({ name:st.n, pos:st.p });
+for(const l of [...markers.markers, ...mwLm, ...lgLm]) pickables.push({ name:l.name, pos:l.pos });
+
+const measure = { pts:[], grp:new THREE.Group(), label:null };
+model.add(measure.grp);
+const mLineGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6),3));
+const mLine = new THREE.Line(mLineGeo, new THREE.LineBasicMaterial({ color:0x6fd6ff, transparent:true, opacity:.9, depthTest:false }));
+mLine.renderOrder = 21; mLine.visible = false;
+measure.grp.add(mLine);
+const mDots = [0,1].map(()=> {
+  const d = new THREE.Mesh(new THREE.SphereGeometry(1,10,8),
+    new THREE.MeshBasicMaterial({ color:0x6fd6ff, depthTest:false, transparent:true, opacity:.95 }));
+  d.renderOrder = 21; d.visible = false; measure.grp.add(d); return d;
+});
+function fmtDist(pc){
+  const ly = pc*3.26156;
+  const f=(v,u)=> v>=1e6 ? (v/1e6).toFixed(2)+' M'+u : v>=1e3 ? (v/1e3).toFixed(2)+' k'+u : v.toFixed(v<10?1:0)+' '+u;
+  return f(pc,'pc')+' · '+f(ly,'ly');
+}
+function clearMeasure(){
+  measure.pts.length = 0;
+  mLine.visible = false;
+  mDots.forEach(d=>d.visible=false);
+  if(measure.label){ measure.grp.remove(measure.label); measure.label.material.map.dispose(); measure.label.material.dispose(); measure.label = null; }
+}
+function placeMeasure(obj){
+  if(measure.pts.length >= 2) clearMeasure();
+  measure.pts.push(obj);
+  const i = measure.pts.length-1;
+  mDots[i].position.set(...obj.pos); mDots[i].visible = true;
+  if(measure.pts.length === 2){
+    const [A,B] = measure.pts;
+    const arr = mLineGeo.attributes.position.array;
+    arr.set([...A.pos, ...B.pos]); mLineGeo.attributes.position.needsUpdate = true;
+    mLineGeo.computeBoundingSphere();
+    mLine.visible = true;
+    const dpc = Math.hypot(A.pos[0]-B.pos[0], A.pos[1]-B.pos[1], A.pos[2]-B.pos[2]);
+    measure.label = makeLabel(fmtDist(dpc), A.name+' → '+B.name, '#6fd6ff');
+    measure.label.position.set((A.pos[0]+B.pos[0])/2, (A.pos[1]+B.pos[1])/2, (A.pos[2]+B.pos[2])/2);
+    measure.label.userData.base = measure.label.position.clone();
+    measure.grp.add(measure.label);
+  }
+  updateMeasureScale();
+}
+function updateMeasureScale(){
+  const s = model.scale.x;
+  const r = THREE.MathUtils.clamp(0.006/s, 1e-9, 5e5);
+  mDots.forEach(d=>d.scale.setScalar(r));
+  if(measure.label){
+    const h = THREE.MathUtils.clamp(0.075/s, 1e-9, 4e5);
+    measure.label.scale.set(h*measure.label.userData.aspect, h, 1);
+    measure.label.position.copy(measure.label.userData.base); measure.label.position.z += h*0.9;
+  }
+}
+function pickAlongRay(ray){                     // ray already in model space
+  let best = null, bestAng = 0.05;
+  for(const o of pickables){
+    _w.set(o.pos[0]-ray.origin.x, o.pos[1]-ray.origin.y, o.pos[2]-ray.origin.z);
+    const t = _w.dot(ray.direction);
+    if(t <= 0) continue;
+    const ang = Math.sqrt(Math.max(_w.lengthSq()-t*t, 0))/t;
+    if(ang < bestAng){ bestAng = ang; best = o; }
+  }
+  if(best) placeMeasure(best);
+}
+function modelRayFrom(obj3d){
+  _ray.origin.setFromMatrixPosition(obj3d.matrixWorld);
+  _w.set(0,0,-1).transformDirection(obj3d.matrixWorld);
+  _ray.direction.copy(_w);
+  _inv.copy(model.matrixWorld).invert();
+  return _ray.applyMatrix4(_inv);
+}
+/* desktop: click (no drag) two objects while Measure is on */
+let downXY = null;
+renderer.domElement.addEventListener('pointerdown', e=>{ downXY=[e.clientX,e.clientY]; });
+renderer.domElement.addEventListener('pointerup', e=>{
+  if(!measureOn || !downXY) return;
+  if(Math.hypot(e.clientX-downXY[0], e.clientY-downXY[1]) > 5) return;
+  _rc.setFromCamera(new THREE.Vector2(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1), camera);
+  _ray.copy(_rc.ray);
+  _inv.copy(model.matrixWorld).invert();
+  pickAlongRay(_ray.applyMatrix4(_inv));
+});
+tgl('tMeasure', on=>{ measureOn = on; if(!on) clearMeasure(); });
+
+/* ---------------- smoothed model transform (slow, damped controls) ---------------- */
+const tgtPos = model.position.clone();
+const tgtQuat = model.quaternion.clone();
+function setPose(x,y,z){ model.position.set(x,y,z); tgtPos.set(x,y,z); }
+
+
+/* ---------------- destinations: fly-to without hunting through stars ---------------- */
+const findLm = (arr,n)=>{ const x=arr.find(v=>v.name===n); return x?x.pos:[0,0,0]; };
+const DESTS = {
+  solar:{ p:[0,0,0], log:4.55, label:'Solar system' },
+  orion:{ p:[-342,-190,-135], log:-2.35, label:'Orion clouds' },
+  sgra:{ p:[8178,0,-14], log:-4.3, label:'Galactic centre' },
+  omcen:{ p:findLm(mwLm,'Omega Centauri'), log:-3.9, label:'Omega Centauri' },
+  lmc:{ p:findLm(lgLm,'LMC'), log:-5.0, label:'LMC' },
+  m31:{ p:findLm(lgLm,'Andromeda (M31)'), log:-6.1, label:'Andromeda' },
+};
+
+/* 3D crosshair target: eight corner ticks converging on the destination */
+const cross = new THREE.Group(); model.add(cross); cross.visible=false;
+const crossMat = new THREE.LineBasicMaterial({ color:0x9fe8ff, transparent:true, opacity:0.95,
+  blending:THREE.AdditiveBlending, depthTest:false });
+for(const sx of [-1,1]) for(const sy of [-1,1]) for(const sz of [-1,1]){
+  const d=new THREE.Vector3(sx,sy,sz).normalize();
+  const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [d.clone().multiplyScalar(0.55), d.clone()]), crossMat);
+  l.renderOrder=25; cross.add(l);
+}
+let crossLabel=null, crossT=-1;
+function showCross(pos,name){
+  cross.position.set(pos[0],pos[1],pos[2]);
+  if(crossLabel) cross.remove(crossLabel);
+  crossLabel=makeLabel(name,null,'#9fe8ff');
+  cross.add(crossLabel);
+  crossT=0; cross.visible=true;
+  crossMat.opacity=0.95;
+}
+function updateCross(dt){
+  if(crossT<0) return;
+  crossT+=dt;
+  const sc=model.scale.x, R=0.075/sc;
+  cross.scale.setScalar(R);
+  const h=(0.08/sc)/R;
+  crossLabel.scale.set(h*crossLabel.userData.aspect,h,1);
+  crossLabel.position.set(0,0,1.6);
+  const fade = travel ? 1 : (crossT<6 ? 1 : Math.max(0,1-(crossT-6)/1.2));
+  crossMat.opacity=0.95*fade;
+  crossLabel.material.opacity=fade;
+  if(fade<=0){ cross.visible=false; crossT=-1; }
+}
+/* spaceship travel: orient toward the target, then ease 0 → max → 0 toward it */
+let travel=null;
+function smoothstep5(x){ x=THREE.MathUtils.clamp(x,0,1); return x*x*x*(x*(x*6-15)+10); }
+function goTo(d){
+  const xr=renderer.xr.isPresenting;
+  const cam=xr?renderer.xr.getCamera():camera;
+  const head=new THREE.Vector3(); cam.getWorldPosition(head);
+  const fwd=new THREE.Vector3(); cam.getWorldDirection(fwd); fwd.y=0;
+  if(fwd.lengthSq()<1e-6) fwd.set(0,0,-1); fwd.normalize();
+  const anchor=xr ? head.clone().addScaledVector(fwd,0.95).setY(Math.max(head.y-0.05,0.75))
+                  : controls.target.clone();
+  /* orient: yaw the map so the destination lies ahead of you */
+  const Pw=model.localToWorld(new THREE.Vector3(d.p[0],d.p[1],d.p[2]));
+  const v1=Pw.sub(head); v1.y=0;
+  const q1=tgtQuat.clone();
+  if(v1.lengthSq()>1e-8){
+    v1.normalize();
+    const dy=Math.atan2(fwd.x,fwd.z)-Math.atan2(v1.x,v1.z);
+    q1.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),dy));
+  }
+  const sc=Math.pow(10,d.log);
+  const p1=anchor.sub(new THREE.Vector3(d.p[0],d.p[1],d.p[2]).applyQuaternion(q1).multiplyScalar(sc));
+  travel={ t:0, dur:2.6+0.5*Math.abs(d.log-targetLog),
+           p0:tgtPos.clone(), q0:tgtQuat.clone(), l0:targetLog,
+           p1, q1, l1:d.log };
+  showCross(d.p, d.label);
+  presetBtns.forEach(x=>x.classList.remove('on'));
+}
+function updateTravel(dt){
+  if(!travel) return;
+  travel.t+=dt;
+  const u=travel.t/travel.dur;
+  const e=smoothstep5(u);                        // position/scale: accelerate then brake
+  const er=smoothstep5(Math.min(1,u/0.35));      // orientation completes first
+  tgtQuat.copy(travel.q0).slerp(travel.q1,er);
+  tgtPos.lerpVectors(travel.p0,travel.p1,e);
+  targetLog=travel.l0+(travel.l1-travel.l0)*e;
+  logScale=targetLog;
+  scaleSlider.value=targetLog;
+  applyScale();
+  if(travel.t>=travel.dur) travel=null;
+}
+document.querySelectorAll('#dests .preset').forEach(b=>b.addEventListener('click', ()=>goTo(DESTS[b.dataset.d])));
+
+/* ---------------- controllers + hands ---------------- */
+const cmf = new XRControllerModelFactory();
+const hf  = new XRHandModelFactory();
+const grips = [renderer.xr.getControllerGrip(0), renderer.xr.getControllerGrip(1)];
+grips.forEach(g=>{ g.add(cmf.createControllerModel(g)); scene.add(g); });
+const hands = [renderer.xr.getHand(0), renderer.xr.getHand(1)];
+hands.forEach(h=>{ h.add(hf.createHandModel(h, 'mesh')); scene.add(h); });
+const ctrls = [renderer.xr.getController(0), renderer.xr.getController(1)];
+ctrls.forEach(c=>{
+  c.addEventListener('connected', e=>{ c.userData.hand = e.data.handedness; });
+  const ray = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0,0,-1)]),
+    new THREE.LineBasicMaterial({ color:0x6fd6ff, transparent:true, opacity:.5 }));
+  ray.scale.z = 0.6; c.add(ray); scene.add(c);
+  c.addEventListener('selectstart', ()=>{ if(panelSelect(c)) return; if(measureOn) pickAlongRay(modelRayFrom(c)); });
+});
+
+
+/* ============ wrist menu v3: stable anchor, tabs, categories, pin/detach ============ */
+let AC=null;
+function snd(f0,f1,dur,vol){ try{
+  if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state==='suspended') AC.resume();
+  const o=AC.createOscillator(),g=AC.createGain();
+  o.frequency.setValueAtTime(f0,AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(f1,AC.currentTime+dur);
+  g.gain.setValueAtTime(vol,AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+  o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime+dur);
+}catch(e){} }
+const sndHover=()=>snd(1500,1500,0.03,0.045);
+const sndPress=()=>snd(880,620,0.07,0.11);
+function haptic(a,ms){ const ses=renderer.xr.getSession(); if(!ses)return;
+  for(const src of ses.inputSources)
+    if(src.handedness==='right'&&src.gamepad&&src.gamepad.hapticActuators&&src.gamepad.hapticActuators[0])
+      src.gamepad.hapticActuators[0].pulse(a,ms); }
+
+/* starry translucent hands so you can always see them */
+const handMat = new THREE.MeshBasicMaterial({ color:0x9fc8ff, transparent:true, opacity:0.5,
+  blending:THREE.AdditiveBlending, depthWrite:false });
+
+const wristG = new THREE.Group(); scene.add(wristG); wristG.visible=false;
+const watchFace = new THREE.Mesh(new THREE.CircleGeometry(0.019,24),
+  new THREE.MeshBasicMaterial({ color:0x6fd6ff, transparent:true, opacity:0.85, side:THREE.DoubleSide, depthTest:false }));
+const watchRing = new THREE.Mesh(new THREE.RingGeometry(0.021,0.027,24),
+  new THREE.MeshBasicMaterial({ color:0xff9a3c, transparent:true, opacity:0.95, side:THREE.DoubleSide, depthTest:false }));
+watchFace.renderOrder=watchRing.renderOrder=30;
+wristG.add(watchFace,watchRing);
+
+const PW=512, PH=640, PMW=0.28, PMH=PMW*PH/PW;
+const panelCv=document.createElement('canvas'); panelCv.width=PW; panelCv.height=PH;
+const panelTex=new THREE.CanvasTexture(panelCv);
+const panelMesh=new THREE.Mesh(new THREE.PlaneGeometry(PMW,PMH),
+  new THREE.MeshBasicMaterial({ map:panelTex, transparent:true, depthTest:false, side:THREE.DoubleSide }));
+panelMesh.renderOrder=31; panelMesh.visible=false; scene.add(panelMesh);
+const cursorDot=new THREE.Mesh(new THREE.SphereGeometry(0.006,12,8),
+  new THREE.MeshBasicMaterial({ color:0xffd7ae, depthTest:false }));
+cursorDot.renderOrder=33; cursorDot.visible=false; scene.add(cursorDot);
+
+let panelOpen=false, panelPinned=false, tab=0, tapT=0, btnT=0, hoverId=-1, pressedId=-1, pressT=0;
+let fingerDown=false, panelHot=false;
+const pinPose={ p:new THREE.Vector3(), q:new THREE.Quaternion() };
+const smoothP=new THREE.Vector3(), smoothYaw={v:0, init:false};
+
+/* category colours */
+const CAT={ nav:'#b48cff', preset:'#6fd6ff', layer:'#7fe0a0', marker:'#ffb35c',
+            tool:'#ff8cb0', sky:'#8fd8ff', sys:'#dbe4f0' };
+let PB=[];
+function cap(txt){ PB.push({cap:txt}); }
+function row(defs, cat){ PB.push({row:defs, cat}); }
+function sld(label,get,set,mn,mx){ PB.push({slider:true,label,get,set,mn,mx}); }
+function buildTab(){
+  PB=[];
+  row([['VIEW',()=>{tab=0;buildTab();},()=>tab===0],
+       ['LAYERS',()=>{tab=1;buildTab();},()=>tab===1],
+       ['TOOLS',()=>{tab=2;buildTab();},()=>tab===2],
+       [panelPinned?'UNPIN':'PIN',()=>{togglePin();},()=>panelPinned]],'sys');
+  if(tab===0){
+    cap('GO TO — orient & travel there (spaceship)');
+    row([['SOLAR',()=>goTo(DESTS.solar)],['ORION',()=>goTo(DESTS.orion)],
+         ['SGR A*',()=>goTo(DESTS.sgra)],['ω CEN',()=>goTo(DESTS.omcen)]],'nav');
+    row([['LMC',()=>goTo(DESTS.lmc)],['M31',()=>goTo(DESTS.m31)]],'nav');
+    cap('SCALE PRESETS — resize the whole map');
+    row([['CLOUDS',()=>{targetLog=-3.1;scaleSlider.value=-3.1;}],
+         ['GALAXY',()=>{targetLog=-4.75;scaleSlider.value=-4.75;}],
+         ['LOCAL GR',()=>{targetLog=-6.05;scaleSlider.value=-6.05;}]],'preset');
+    cap('SKY — light as it reaches your eye');
+    row([['OBSERVED',()=>{obsOn=!obsOn;},()=>obsOn],
+         ['CONSTELL.',()=>{constOn=!constOn;applyScale();},()=>constOn],
+         ['LABELS',()=>{labelsOn=!labelsOn;applyScale();},()=>labelsOn],
+         ['FACE TEXT',()=>{billboardOn=!billboardOn;orientLabels(true);},()=>billboardOn]],'sky');
+    sld('LIMIT MAG',()=>limMag,v=>limMag=v,3,14);
+  }else if(tab===1){
+    cap('DATASETS — show / hide');
+    row([['DUST',()=>{dustOn=!dustOn;applyScale();},()=>dustOn],
+         ['STARS',()=>{starsOn=!starsOn;applyScale();},()=>starsOn],
+         ['CEPHEIDS',()=>{cephOn=!cephOn;applyScale();},()=>cephOn],
+         ['GLOBULAR',()=>{gcOn=!gcOn;applyScale();},()=>gcOn]],'layer');
+    row([['GALAXIES',()=>{galOn=!galOn;applyScale();},()=>galOn],
+         ['SOLAR SYS',()=>{solarOn=!solarOn;applyScale();},()=>solarOn]],'layer');
+    cap('SOLO — isolate one dataset (ALL restores)');
+    row([['S·DUST',()=>{solo=solo==='dust'?null:'dust';applyScale();},()=>solo==='dust'],
+         ['S·STARS',()=>{solo=solo==='stars'?null:'stars';applyScale();},()=>solo==='stars'],
+         ['S·GALAX',()=>{solo=solo==='gal'?null:'gal';applyScale();},()=>solo==='gal'],
+         ['S·SOLAR',()=>{solo=solo==='solar'?null:'solar';applyScale();},()=>solo==='solar']],'layer');
+    row([['ALL',()=>{solo=null;applyScale();},()=>solo===null]],'layer');
+    cap('MARKERS — per-category name tags');
+    row([['MK·CLOUD',()=>{mCloud=!mCloud;applyScale();},()=>mCloud],
+         ['MK·MW',()=>{mMW=!mMW;applyScale();},()=>mMW],
+         ['MK·LGRP',()=>{mLG=!mLG;applyScale();},()=>mLG],
+         ['MK·SOLAR',()=>{mSolar=!mSolar;applyScale();},()=>mSolar]],'marker');
+    row([['STAR NAMES',()=>{namesOn=!namesOn;},()=>namesOn],
+         ['PLANE GRID',()=>{gridOn=!gridOn;applyScale();},()=>gridOn],
+         ['CYL GRID',()=>{cylOn=!cylOn;applyScale();},()=>cylOn]],'marker');
+  }else{
+    cap('TOOLS');
+    row([['MEASURE pc/ly',()=>{measureOn=!measureOn;if(!measureOn)clearMeasure();},()=>measureOn]],'tool');
+    cap('RENDER — brightness & density');
+    sld('DENSITY',()=>volUniforms.uDensity.value,v=>volUniforms.uDensity.value=v,0.1,6);
+    sld('EXPOSURE',()=>expo,v=>{expo=v;applyScale();},0.1,3);
+    sld('GAL GLOW',()=>galBoost,v=>{galBoost=v;applyScale();},0.5,30);
+  }
+  layoutPB(); drawPanel();
+}
+function layoutPB(){
+  const X0=12,W=116,GX=8; let y=10;
+  for(const e of PB){
+    if(e.cap){ e.x=X0; e.y=y; e.h=24; y+=26; continue; }
+    if(e.slider){ e.x=X0; e.y=y; e.w=W*4+GX*3; e.h=42; y+=48; continue; }
+    const n=e.row.length, w=n===1? W*4+GX*3 : (n===2? W*2+GX : (n===3? Math.floor((W*4+GX*3-GX*2)/3) : W));
+    e.btns=e.row.map((b,c)=>({x:X0+c*(w+GX),y,w,h:44,label:b[0],act:b[1],hot:b[2],cat:e.cat}));
+    y+=50;
+  }
+}
+function eachBtn(fn){ let i=0;
+  for(const e of PB){
+    if(e.btns){ for(const b of e.btns){ fn(b,i); i++; } }
+    else if(e.slider){ fn(e,i); i++; }
+  } }
+function drawPanel(){
+  const g=panelCv.getContext('2d');
+  g.clearRect(0,0,PW,PH);
+  g.fillStyle='rgba(8,12,20,0.94)'; g.beginPath(); g.roundRect(0,0,PW,PH,18); g.fill();
+  g.strokeStyle='rgba(150,180,220,0.32)'; g.lineWidth=2; g.beginPath(); g.roundRect(1,1,PW-2,PH-2,18); g.stroke();
+  for(const e of PB) if(e.cap){
+    g.font='600 15px "IBM Plex Mono", monospace'; g.textAlign='left'; g.textBaseline='middle';
+    g.fillStyle='#8fa0ba'; g.fillText(e.cap, e.x, e.y+e.h/2);
+  }
+  g.textAlign='center'; g.textBaseline='middle';
+  eachBtn((b,i)=>{
+    const hov=i===hoverId, prs=i===pressedId&&performance.now()-pressT<200;
+    if(b.slider){
+      g.font='600 16px "IBM Plex Mono", monospace'; g.textAlign='left';
+      g.fillStyle=hov?'#ffd7ae':'#9db0ca'; g.fillText(b.label,b.x+4,b.y+b.h/2);
+      const tx=b.x+126,tw=b.w-138,ty=b.y+b.h/2;
+      g.fillStyle='rgba(150,180,220,0.22)'; g.fillRect(tx,ty-3,tw,6);
+      const f=(b.get()-b.mn)/(b.mx-b.mn);
+      g.fillStyle=hov?'#ffb066':'#ff9a3c'; g.fillRect(tx,ty-3,tw*f,6);
+      g.beginPath(); g.arc(tx+tw*f,ty,hov?11:9,0,Math.PI*2);
+      g.fillStyle=prs?'#ffffff':(hov?'#ffd7ae':'#e8b06a'); g.fill();
+      g.textAlign='center';
+    }else{
+      const col=CAT[b.cat]||'#dbe4f0';
+      const hot=b.hot?b.hot():false;
+      g.fillStyle=prs?'rgba(255,255,255,0.28)':hov?col+'44':hot?col+'2e':'rgba(150,180,220,0.06)';
+      g.beginPath(); g.roundRect(b.x,b.y,b.w,b.h,9); g.fill();
+      g.lineWidth=hov?3:2;
+      g.strokeStyle=prs?'#ffffff':hov?'#ffffff':hot?col:'rgba(150,180,220,0.30)';
+      g.beginPath(); g.roundRect(b.x,b.y,b.w,b.h,9); g.stroke();
+      g.font='600 16px "IBM Plex Mono", monospace';
+      g.fillStyle=hov?'#ffffff':hot?col:'#cfd9ea';
+      g.fillText(b.label,b.x+b.w/2,b.y+b.h/2);
+    }
+  });
+  panelTex.needsUpdate=true;
+}
+function panelHitId(px,py){ let hit=-1;
+  eachBtn((b,i)=>{ const bb=b.slider?b:b;
+    if(px>=bb.x&&px<=bb.x+bb.w&&py>=bb.y-3&&py<=bb.y+bb.h+3) hit=i; });
+  return hit; }
+function btnById(id){ let out=null; eachBtn((b,i)=>{ if(i===id) out=b; }); return out; }
+function panelAct(id,px){
+  const b=btnById(id); if(!b) return;
+  if(b.slider){
+    const tx=b.x+126,tw=b.w-138;
+    b.set(THREE.MathUtils.clamp(b.mn+(px-tx)/tw*(b.mx-b.mn),b.mn,b.mx));
+  }else{
+    const now=performance.now(); if(now-btnT<300) return; btnT=now;
+    b.act();
+  }
+  pressedId=id; pressT=performance.now();
+  sndPress(); haptic(0.7,40); drawPanel();
+}
+function setHover(i){ if(i!==hoverId){ hoverId=i; if(i>=0){ sndHover(); haptic(0.22,10);} drawPanel(); } }
+function togglePin(){
+  panelPinned=!panelPinned;
+  if(panelPinned){ pinPose.p.copy(panelMesh.position); pinPose.q.copy(panelMesh.quaternion); }
+  buildTab();
+}
+const _tip=new THREE.Vector3(), _wp=new THREE.Vector3(), _cp=new THREE.Vector3(), _hz=new THREE.Vector3();
+function leftIdx(){ const i=ctrls.findIndex(c=>c.userData.hand==='left'); return i<0?0:i; }
+function rightIdx(){ const i=ctrls.findIndex(c=>c.userData.hand==='right'); return i<0?1:i; }
+const _panelRC=new THREE.Raycaster();
+function updateWrist(dt){
+  panelHot=false;
+  if(!renderer.xr.isPresenting){ wristG.visible=false; panelMesh.visible=false; cursorDot.visible=false; return; }
+  /* style hands once loaded */
+  for(const h of hands) if(!h.userData.styled){
+    let found=false; h.traverse(o=>{ if(o.isMesh){ o.material=handMat; found=true; } });
+    if(found) h.userData.styled=true;
+  }
+  const li=leftIdx();
+  const lj=hands[li]&&hands[li].joints&&hands[li].joints['wrist'];
+  const src=(lj&&hands[li].visible)?lj:grips[li];
+  _wp.setFromMatrixPosition(src.matrixWorld);
+  const cam=renderer.xr.getCamera(); cam.getWorldPosition(_cp);
+  wristG.position.copy(_wp); wristG.lookAt(_cp); wristG.visible=true;
+  panelMesh.visible=panelOpen;
+  cursorDot.visible=false;
+  if(panelOpen){
+    if(panelPinned){
+      panelMesh.position.copy(pinPose.p); panelMesh.quaternion.copy(pinPose.q);
+    }else{
+      /* stable hand anchor: bottom edge ABOVE the wrist, pushed away from the head;
+         upright (no roll, no pitch), yaw follows lazily with a deadband; heavy smoothing */
+      _hz.copy(_wp).sub(_cp); _hz.y=0;
+      if(_hz.lengthSq()<1e-6) _hz.set(0,0,-1); _hz.normalize();     // head → wrist, horizontal
+      const px=_wp.x+_hz.x*0.10, pz=_wp.z+_hz.z*0.10, py=_wp.y+0.10+PMH/2;
+      if(!smoothYaw.init){ smoothP.set(px,py,pz); smoothYaw.v=Math.atan2(-_hz.x,-_hz.z)+Math.PI; smoothYaw.init=true; }
+      const tgt=new THREE.Vector3(px,py,pz);
+      if(tgt.distanceTo(smoothP)>0.006) smoothP.lerp(tgt, 1-Math.exp(-dt*7)); // deadband + damping
+      const wantYaw=Math.atan2(_cp.x-smoothP.x, _cp.z-smoothP.z);              // face the user, yaw only
+      let dy=wantYaw-smoothYaw.v; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI;
+      if(Math.abs(dy)>0.35) smoothYaw.v+=dy*(1-Math.exp(-dt*4));               // lazy yaw, never tilts
+      panelMesh.position.copy(smoothP);
+      panelMesh.quaternion.setFromEuler(new THREE.Euler(0, smoothYaw.v, 0));   // upright, zero roll
+    }
+  } else smoothYaw.init=false;
+  /* ---- pointer: right index fingertip (touch), else right controller ray ---- */
+  let px2=null, py2=null, world=null, fz=null;
+  const ri=rightIdx();
+  const rj=hands[ri]&&hands[ri].joints&&hands[ri].joints['index-finger-tip'];
+  if(rj&&hands[ri].visible){
+    _tip.setFromMatrixPosition(rj.matrixWorld);
+    const now=performance.now();
+    if(_tip.distanceTo(_wp)<0.05&&now-tapT>800){
+      tapT=now; panelOpen=!panelOpen;
+      if(panelOpen&&panelPinned){ panelPinned=false; }               // watch tap recalls to hand
+      sndPress(); haptic(0.8,50); buildTab();
+    }
+    if(panelOpen){
+      const l=panelMesh.worldToLocal(_tip.clone());
+      if(Math.abs(l.x)<PMW/2+0.03&&Math.abs(l.y)<PMH/2+0.03&&l.z>-0.03&&l.z<0.12){
+        px2=(l.x/PMW+0.5)*PW; py2=(0.5-l.y/PMH)*PH; fz=l.z; world=_tip.clone();
+        panelHot=true;                                               // suppress accidental pinch-grab
+      }
+    }
+  }
+  if(px2===null&&panelOpen){
+    const rc=ctrls[ri];
+    if(rc){
+      _panelRC.ray.origin.setFromMatrixPosition(rc.matrixWorld);
+      _panelRC.ray.direction.set(0,0,-1).transformDirection(rc.matrixWorld);
+      const hit=_panelRC.intersectObject(panelMesh,false)[0];
+      if(hit&&hit.uv&&hit.distance<1.2){ px2=hit.uv.x*PW; py2=(1-hit.uv.y)*PH; world=hit.point; panelHot=true; }
+    }
+  }
+  if(px2!==null){
+    const id=panelHitId(px2,py2);
+    setHover(id);
+    cursorDot.visible=true; cursorDot.position.copy(world);
+    if(fz!==null){
+      /* touch model with hysteresis: press crossing the surface, release on retreat */
+      if(!fingerDown && fz<=0.006){
+        fingerDown=true;
+        if(id>=0) panelAct(id,px2);
+      }else if(fingerDown && fz<=0.02){
+        const b=btnById(id);
+        if(b&&b.slider) panelAct(id,px2);                            // drag while pressed
+      }else if(fingerDown && fz>0.02){ fingerDown=false; }
+    }
+  }else{ setHover(-1); fingerDown=false; }
+}
+function panelSelect(c){
+  if(!renderer.xr.isPresenting) return false;
+  _panelRC.ray.origin.setFromMatrixPosition(c.matrixWorld);
+  _panelRC.ray.direction.set(0,0,-1).transformDirection(c.matrixWorld);
+  const targets=panelOpen?[panelMesh,watchFace]:[watchFace];
+  const hit=_panelRC.intersectObjects(targets,false)[0];
+  if(!hit) return false;
+  if(hit.object===watchFace){ panelOpen=!panelOpen; if(panelOpen&&panelPinned)panelPinned=false; sndPress(); haptic(0.8,50); buildTab(); return true; }
+  if(hit.uv) panelAct(panelHitId(hit.uv.x*PW,(1-hit.uv.y)*PH), hit.uv.x*PW);
+  return true;
+}
+buildTab();
+const grab = { active:[false,false], kind:['grip','grip'], m0:new THREE.Matrix4(), g0:new THREE.Matrix4(),
+               d0:1, s0:1, mid0:new THREE.Vector3(), q0:new THREE.Quaternion(),
+               p0:new THREE.Vector3(), dir0:new THREE.Vector3(1,0,0) };
+function poseMat(i){
+  if(grab.kind[i]==='hand'){
+    const jt = hands[i].joints['index-finger-tip'] || hands[i].joints['wrist'];
+    if(jt) return jt.matrixWorld;
+  }
+  return grips[i].matrixWorld;
+}
+const _a=new THREE.Vector3(), _b2=new THREE.Vector3();
+function pPos(i,v){ return v.setFromMatrixPosition(poseMat(i)); }
+function beginGrab(){
+  if(grab.active[0] && grab.active[1]){
+    pPos(0,_a); pPos(1,_b2);
+    grab.d0=Math.max(_a.distanceTo(_b2), 0.01); grab.s0=Math.pow(10, targetLog);
+    grab.mid0.addVectors(_a,_b2).multiplyScalar(.5);
+    grab.p0.copy(tgtPos); grab.q0.copy(tgtQuat);
+    grab.dir0.copy(_b2).sub(_a).setY(0).normalize();
+  }else if(grab.active[0]||grab.active[1]){
+    const i = grab.active[0]?0:1;
+    grab.g0.copy(poseMat(i)).invert();
+    grab.m0.compose(tgtPos, tgtQuat, new THREE.Vector3().setScalar(Math.pow(10,targetLog)));
+  }
+}
+function startGrab(i, kind){ travel=null; grab.kind[i]=kind; grab.active[i]=true; beginGrab(); }
+function endGrab(i){ grab.active[i]=false; beginGrab(); }
+for(let i=0;i<2;i++){
+  grips[i].addEventListener('squeezestart', ()=>startGrab(i,'grip'));
+  grips[i].addEventListener('squeezeend',   ()=>endGrab(i));
+  hands[i].addEventListener('pinchstart',   ()=>{ if(!measureOn && !(panelHot && i===rightIdx())) startGrab(i,'hand'); });
+  hands[i].addEventListener('pinchend',     ()=>endGrab(i));
+}
+const parentInv = new THREE.Matrix4(), _tScale = new THREE.Vector3();
+function updateGrab(){
+  const a=grab.active[0], b2=grab.active[1];
+  if(a&&b2){
+    pPos(0,_a); pPos(1,_b2);
+    const k = THREE.MathUtils.clamp(_a.distanceTo(_b2)/grab.d0, 0.02, 50);
+    const sDes = THREE.MathUtils.clamp(grab.s0*k, Math.pow(10,-7.3), Math.pow(10,0.5));
+    targetLog = Math.log10(sDes);
+    scaleSlider.value = targetLog;
+    const mid = _a.clone().add(_b2).multiplyScalar(.5);
+    const dir = _b2.clone().sub(_a).setY(0).normalize();
+    const yaw = Math.atan2(grab.dir0.clone().cross(dir).y, grab.dir0.dot(dir));
+    const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
+    tgtQuat.copy(qy).multiply(grab.q0);
+    tgtPos.copy(mid).add(grab.p0.clone().sub(grab.mid0).applyQuaternion(qy).multiplyScalar(sDes/grab.s0));
+  }else if(a||b2){
+    const i=a?0:1;
+    const m = new THREE.Matrix4().multiplyMatrices(poseMat(i), grab.g0).multiply(grab.m0);
+    parentInv.copy(scene.matrixWorld).invert();
+    m.premultiply(parentInv);
+    m.decompose(tgtPos, tgtQuat, _tScale);        // keep scale governed by targetLog
+  }
+}
+const _fwd=new THREE.Vector3(), _rgt=new THREE.Vector3();
+function updateSticks(dt){
+  const session = renderer.xr.getSession();
+  if(!session) return;
+  for(const src of session.inputSources){
+    if(!src.gamepad) continue;
+    const ax = src.gamepad.axes;
+    const x = ax[2]??ax[0]??0, y = ax[3]??ax[1]??0;
+    if(Math.abs(x)<0.12 && Math.abs(y)<0.12) continue;
+    const cam = renderer.xr.getCamera();
+    cam.getWorldDirection(_fwd);
+    _rgt.crossVectors(_fwd, new THREE.Vector3(0,1,0)).normalize();
+    const speed = 1.6*dt*Math.max(model.scale.x*300, 0.25);
+    if(src.handedness==='left'){
+      tgtPos.addScaledVector(_fwd, y*speed);
+      tgtPos.addScaledVector(_rgt, -x*speed);
+    }else{
+      const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), -x*dt*1.4);
+      tgtQuat.premultiply(qy);
+      if(Math.abs(y)>0.15){
+        targetLog = THREE.MathUtils.clamp(targetLog - Math.sign(y)*dt*0.55, -7.3, 0.5);
+        scaleSlider.value = targetLog;
+      }
+    }
+  }
+}
+
+/* ---------------- loop ---------------- */
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  updateProj();
+});
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(()=>{
+  const dt = Math.min(clock.getDelta(), .05);
+  if(renderer.xr.isPresenting){ updateGrab(); updateSticks(dt); updateWrist(dt); }
+  else controls.update();
+  /* damped easing toward targets — deliberate, slow-feeling motion */
+  const k = 1 - Math.exp(-dt*6.5);
+  model.position.lerp(tgtPos, k);
+  model.quaternion.slerp(tgtQuat, k);
+  if(Math.abs(targetLog-logScale) > 1e-4){
+    logScale += (targetLog-logScale)*k;
+    applyScale();
+    updateMeasureScale();
+  }
+  updateNames();
+  updateObserved();
+  updateTravel(dt);
+  updateCross(dt);
+  orientLabels();
+  renderer.render(scene, camera);
+});
+document.getElementById('status').classList.add('hide');
+window.__dbg = { measure, nameCache, model, solarGroup, solarLbl, goTo, DESTS, get obs(){return obsOn;}, set obs(v){obsOn=v;}, set lim(v){limMag=v;}, get cyl(){return cylOn;}, get namesVisible(){ let n=0; for(const s of nameCache.values()) if(s.visible) n++; return n; } };
+</script>
+</body>
+</html>
