@@ -82,7 +82,7 @@ export class WristPanel implements Updatable {
   private hoverBtn: string | null = null;
   private tab: Tab = "main";
   private page = 0;
-  private destinations: { name: string; sel: Selectable }[] = [];
+  private destinations: { name: string; sel: Selectable; cat?: string }[] = [];
   private attachParent: THREE.Object3D | null = null;
   private attachPos = new THREE.Vector3(0.02, 0.06, 0.03);
   private attachRot = new THREE.Euler(-1.1, 0.3, 0.4);
@@ -152,7 +152,7 @@ export class WristPanel implements Updatable {
     }
   }
 
-  setDestinations(items: { name: string; sel: Selectable }[]) {
+  setDestinations(items: { name: string; sel: Selectable; cat?: string }[]) {
     this.destinations = items;
   }
 
@@ -415,8 +415,14 @@ export class WristPanel implements Updatable {
     g.fillText(`DESTINATIONS  ${this.page + 1}/${pages}`, 18, 88);
     const start = this.page * this.perPage();
     const items = this.destinations.slice(start, start + this.perPage());
+    // #48: data-source attribution under the header (list is sorted by source).
+    const cat = items[0]?.cat;
+    if (cat) {
+      g.fillStyle = "#5c6f8d"; g.font = "400 16px system-ui";
+      g.fillText(cat.toUpperCase(), 18, 106);
+    }
     items.forEach((d, i) => {
-      this.btn({ id: `dest:${start + i}`, label: d.name, x: 12, y: 106 + i * 66, w: 488, h: 56 });
+      this.btn({ id: `dest:${start + i}`, label: d.name, x: 12, y: 116 + i * 64, w: 488, h: 54 });
     });
     this.btn({ id: "page:prev", label: "◀ Prev", x: 12, y: 520, w: 238, h: 56 });
     this.btn({ id: "page:next", label: "Next ▶", x: 262, y: 520, w: 238, h: 56 });

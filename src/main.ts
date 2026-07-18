@@ -268,7 +268,7 @@ async function boot() {
     };
     selection.registerMany([sel]);
     landmarkDests.push({
-      name: lm.name, cat: "LANDMARKS", sel,
+      name: lm.name, cat: "Landmarks · MW Atlas", sel,
       distPC: Math.hypot(lm.pos[0], lm.pos[1], lm.pos[2]),
     });
   }
@@ -296,7 +296,7 @@ async function boot() {
       describe: () => `<b>${cosmo.name}</b><br>${cosmo.desc}<br><span class="dim">Planck/WMAP cosmology (see manifest)</span>`,
     };
     selection.registerMany([sel]);
-    landmarkDests.push({ name: cosmo.name, cat: "COSMOLOGY", sel, distPC: CMB_RADIUS_PC });
+    landmarkDests.push({ name: cosmo.name, cat: "Cosmology · WMAP/Planck", sel, distPC: CMB_RADIUS_PC });
   }
   // Named stars as selectables (top 400).
   data.stars.meta.names.forEach((n) => {
@@ -319,6 +319,7 @@ async function boot() {
   const nav = new Navigation(app);
   app.addUpdatable(nav);
   cmb.getLog = () => nav.logScale;
+  cmb.getCamDistPC = () => nav.universePos(new THREE.Vector3()).length(); // #41 proximity gate
   // Travel trails (D15): fading speed-colored ribbon of the actual flight path.
   const trails = new TravelTrails(app, nav);
   app.scene.add(trails.group);
@@ -486,8 +487,9 @@ async function boot() {
   // ---------- destinations list ----------
   const allDest = buildDestinations(hud, selection, { solar, dso, compact, exoplanets, missions, cinematic });
   hud.addDestinations(landmarkDests);
-  const wristDest = [...allDest, ...landmarkDests];
-  wrist.setDestinations(wristDest.map((d) => ({ name: d.name, sel: d.sel })));
+  // #48: the wrist list is sorted by data source so paged browsing stays grouped.
+  const wristDest = [...allDest, ...landmarkDests].sort((a, b) => a.cat.localeCompare(b.cat));
+  wrist.setDestinations(wristDest.map((d) => ({ name: d.name, sel: d.sel, cat: d.cat })));
 
   // ---------- layer visibility wiring ----------
   const applyLayers = () => {
@@ -612,7 +614,7 @@ function buildDestinations(
 ): { name: string; cat: string; sel: Selectable; distPC?: number }[] {
   const all: { name: string; cat: string; sel: Selectable; distPC?: number }[] = [];
   const solarSels = layers.solar.toSelectables();
-  all.push(...solarSels.map((s) => ({ name: s.name, cat: "SOLAR SYSTEM", sel: s, distPC: undefined })));
+  all.push(...solarSels.map((s) => ({ name: s.name, cat: "Solar system · NASA/JPL", sel: s, distPC: undefined })));
   // Famous DSOs.
   const famous = ["M31", "M42", "M45", "M13", "M104", "M51", "M8", "M57", "M1", "M33", "M101", "M16"];
   const dsoSels = layers.dso.toSelectables();
@@ -622,13 +624,13 @@ function buildDestinations(
       .filter((s): s is Selectable => !!s)
       .map((s) => {
         const o = layers.dso.objects[parseInt(s.id.slice(4))];
-        return { name: s.name, cat: "DEEP SKY", sel: s, distPC: o?.d ? o.d / PC_TO_LY : undefined };
+        return { name: s.name, cat: "Deep-sky · OpenNGC/Messier", sel: s, distPC: o?.d ? o.d / PC_TO_LY : undefined };
       }),
   );
   // Compact objects.
   const compSels = layers.compact.toSelectables();
   all.push(...compSels.map((s, i) => ({
-    name: s.name, cat: "EXOTIC", sel: s, distPC: layers.compact.objects[i]?.d_pc,
+    name: s.name, cat: "Compact objects · curated literature", sel: s, distPC: layers.compact.objects[i]?.d_pc,
   })));
   // Notable exoplanet systems.
   const notable = ["TRAPPIST-1 e", "Proxima Centauri b", "Kepler-452 b", "51 Pegasi b", "HD 209458 b", "Kepler-186 f"];
@@ -639,7 +641,7 @@ function buildDestinations(
       .filter((x): x is { s: Selectable; n: string } => !!x.s)
       .map(({ s }) => {
         const idx = parseInt(s.id.slice(4));
-        return { name: s.name, cat: "EXOPLANETS", sel: s, distPC: layers.exoplanets.planets[idx]?.d };
+        return { name: s.name, cat: "Exoplanets · NASA Archive", sel: s, distPC: layers.exoplanets.planets[idx]?.d };
       }),
   );
   // Missions.
@@ -647,11 +649,11 @@ function buildDestinations(
   all.push(
     ...missionSels
       .filter((s) => ["Voyager 1", "Voyager 2", "JWST", "ISS", "New Horizons", "Perseverance"].includes(s.name))
-      .map((s) => ({ name: s.name, cat: "MISSIONS", sel: s })),
+      .map((s) => ({ name: s.name, cat: "Missions · NASA/ESA", sel: s })),
   );
   // Cinematic (flagged as fiction).
   all.push(
-    ...layers.cinematic.toSelectables().slice(0, 6).map((s) => ({ name: s.name, cat: "✦ CINEMATIC (FICTION)", sel: s })),
+    ...layers.cinematic.toSelectables().slice(0, 6).map((s) => ({ name: s.name, cat: "Cinematic · fiction", sel: s })),
   );
   hud.addDestinations(all);
   return all;

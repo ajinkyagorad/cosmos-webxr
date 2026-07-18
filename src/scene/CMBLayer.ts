@@ -16,8 +16,10 @@ export class CMBLayer implements Updatable {
   private mat: THREE.MeshBasicMaterial;
   /** Wired by main after Navigation exists: returns the current eased log scale. */
   getLog: () => number = () => 2.1;
-  /** Layer toggle (settings "layerCMB", default ON). */
-  enabled = true;
+  /** Wired by main: camera distance from the Sun in universe-local pc (#41). */
+  getCamDistPC: () => number = () => 0;
+  /** Layer toggle (settings "layerCMB", default OFF since #41). */
+  enabled = false;
 
   constructor() {
     const tex = new THREE.TextureLoader().load(
@@ -42,11 +44,15 @@ export class CMBLayer implements Updatable {
   }
 
   update(_dt: number, _t: number): void {
-    // The shell is 1.4e10 pc away — beyond the far plane until log ≲ −1.5.
-    // Fade 0 → 1 across log −1.5 → −2.5 so it never pops.
+    // #41: the CMB is the sky of the deep intergalactic void ONLY. Two gates:
+    //  1. far-plane/zoom gate — the shell is 1.4e10 pc away; fade 0→1 across
+    //     log −1.5 → −2.5 so it only appears once it fits inside the far plane.
+    //  2. proximity gate — fade 0→1 as the camera leaves 0.2–0.6 Gpc from the
+    //     Sun (universe-local). Zoomed out but parked next to a galaxy? Hidden.
     const log = this.getLog();
-    const fade = 1 - THREE.MathUtils.smoothstep(log, -2.5, -1.5);
-    this.mat.opacity = this.enabled ? fade : 0;
+    const zoomGate = 1 - THREE.MathUtils.smoothstep(log, -2.5, -1.5);
+    const proxGate = THREE.MathUtils.smoothstep(this.getCamDistPC(), 2e8, 6e8);
+    this.mat.opacity = this.enabled ? zoomGate * proxGate : 0;
     this.mesh.visible = this.mat.opacity > 0.003;
   }
 }

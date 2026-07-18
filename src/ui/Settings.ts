@@ -65,7 +65,7 @@ const DEFAULTS: SettingsState = {
   layerGlobulars: true,
   layerGalaxies: true,
   layerConstellations: false,
-  layerCMB: true,
+  layerCMB: false, // #41: off by default — auto-activates only in deep intergalactic space anyway
   layerDarkHalo: true,
   layerGrid: false,
   layer2MRS: true,

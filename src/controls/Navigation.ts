@@ -204,10 +204,14 @@ export class Navigation implements Updatable {
     this.yawAboutHead(-x * dt * THREE.MathUtils.degToRad(degPerSec));
   }
 
-  /** Log-scale zoom, hard-clamped. Right stick Y (raw axis; push-up zooms in). */
+  /** Log-scale zoom, hard-clamped. Right stick Y (raw axis; push-up zooms in).
+   *  #40: the dex/s rate grows with distance from home (up to 4×), so crossing
+   *  the ~9.4 dex to the Local Group takes seconds, not a 17 s stick-hold. */
   zoomStick(y: number, dt: number) {
     if (Math.abs(y) <= 0.15) return;
-    this.setTargetLog(this.targetLog - Math.sign(y) * dt * 0.55);
+    const BASE = 0.55;
+    const boost = THREE.MathUtils.clamp(1 + (HOME_LOG - this.targetLog) * 0.35, 1, 4);
+    this.setTargetLog(this.targetLog - Math.sign(y) * Math.abs(y) * BASE * boost * dt);
   }
 
   /** Scroll-wheel / button zoom steps (positive = zoom in). */
