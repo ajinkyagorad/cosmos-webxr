@@ -207,65 +207,82 @@ export class AudioEngine {
     // Keep listener at origin facing -z (we feed world-space-ish direction; good enough).
   }
 
-  /** Calm generative pad: detuned oscillators → lowpass → reverb, slow random chords. */
+  /**
+   * Calm generative pad — reworked to be genuinely pleasant:
+   * consonant triads only (major/minor), very slow attacks (8–14 s), chord changes every
+   * 35–60 s with long crossfades, warm lowpassed triangle+sine blend, ≤1 cent detune,
+   * very low default level. No abrupt onsets, ever.
+   */
   private startMusic() {
     if (!this.ctx || this.musicTimer !== null) return;
     const ctx = this.ctx;
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = 0.0;
-    this.musicGain.gain.linearRampToValueAtTime(0.05, ctx.currentTime + 6);
+    this.musicGain.gain.linearRampToValueAtTime(0.032, ctx.currentTime + 12);
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.frequency.value = 900;
+    lp.frequency.value = 620;
+    lp.Q.value = 0.4;
     lp.connect(this.musicGain);
     this.musicGain.connect(this.master);
     this.musicGain.connect(this.reverb);
-    // Slow filter LFO for gentle movement.
+    // Very slow filter LFO for gentle warmth drift.
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.05;
+    lfo.frequency.value = 0.02;
     const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 300;
+    lfoGain.gain.value = 160;
     lfo.connect(lfoGain).connect(lp.frequency);
     lfo.start();
 
-    // Pentatonic minor chord pool (A minor pentatonic-ish, low register).
-    const roots = [110, 130.81, 146.83, 164.81, 196];
-    const chordShapes = [[1, 1.5, 2], [1, 1.189, 1.782], [1, 1.335, 2], [1, 1.5, 1.782]];
+    // Consonant progression: Am – F – C – G – Em – Am (all major/minor triads).
+    // Roots in a low, warm register.
+    const roots = [110.0, 87.31, 130.81, 98.0, 82.41, 110.0]; // A2 F2 C3 G2 E2 A2
+    const qualities: number[][] = [
+      [1, 1.1892, 1.4983], // minor
+      [1, 1.2599, 1.4983], // major
+      [1, 1.2599, 1.4983],
+      [1, 1.2599, 1.4983],
+      [1, 1.1892, 1.4983],
+      [1, 1.1892, 1.4983],
+    ];
     let chordIdx = Math.floor(Math.random() * roots.length);
-    const voices: { osc: OscillatorNode[]; gain: GainNode } = { osc: [], gain: ctx.createGain() };
-    voices.gain.gain.value = 0.5;
-    voices.gain.connect(lp);
+    let activeVoices: { osc: OscillatorNode[]; gain: GainNode } | null = null;
 
     const playChord = () => {
       if (!this.ctx || !this.musicGain) return;
       const t = this.ctx.currentTime;
-      // Fade out old voices.
-      for (const o of voices.osc) {
-        try { o.stop(t + 7); } catch { /* already stopped */ }
+      // Long crossfade: release previous chord over 20 s.
+      if (activeVoices) {
+        const old = activeVoices;
+        old.gain.gain.setTargetAtTime(0.0001, t, 6);
+        for (const o of old.osc) { try { o.stop(t + 25); } catch { /* stopped */ } }
       }
-      voices.osc = [];
-      // Random walk to a nearby chord.
-      chordIdx = (chordIdx + (Math.random() < 0.5 ? 1 : roots.length - 1)) % roots.length;
-      const shape = chordShapes[Math.floor(Math.random() * chordShapes.length)];
-      const root = roots[chordIdx] * (Math.random() < 0.3 ? 0.5 : 1);
+      // Slow random walk through the progression.
+      chordIdx = (chordIdx + (Math.random() < 0.6 ? 1 : roots.length - 1)) % roots.length;
+      const root = roots[chordIdx] * (Math.random() < 0.25 ? 0.5 : 1);
+      const shape = qualities[chordIdx];
+      const vg = this.ctx.createGain();
+      vg.gain.setValueAtTime(0.0001, t);
+      vg.gain.linearRampToValueAtTime(0.6, t + 10 + Math.random() * 6); // 10–16 s attack
+      vg.connect(lp);
+      const oscs: OscillatorNode[] = [];
       for (const ratio of shape) {
-        for (const det of [-2.5, 0, 2.5]) {
+        // Warm blend: one triangle + one sine per note, ≤1 cent apart.
+        for (const [type, det, lvl] of [["triangle", -1, 0.5], ["sine", 1, 0.7]] as const) {
           const o = this.ctx.createOscillator();
-          o.type = "sine";
+          o.type = type as OscillatorType;
           o.frequency.value = root * ratio;
           o.detune.value = det;
-          const vg = this.ctx.createGain();
-          vg.gain.setValueAtTime(0.0001, t);
-          vg.gain.linearRampToValueAtTime(0.16 / shape.length, t + 4 + Math.random() * 3);
-          vg.gain.linearRampToValueAtTime(0.0001, t + 14 + Math.random() * 4);
-          o.connect(vg).connect(voices.gain);
+          const og = this.ctx.createGain();
+          og.gain.value = lvl / shape.length;
+          o.connect(og).connect(vg);
           o.start(t);
-          o.stop(t + 20);
-          voices.osc.push(o);
+          oscs.push(o);
         }
       }
-      // Schedule next chord.
-      this.musicTimer = window.setTimeout(playChord, 9000 + Math.random() * 5000);
+      activeVoices = { osc: oscs, gain: vg };
+      // Next chord in 35–60 s.
+      this.musicTimer = window.setTimeout(playChord, 35000 + Math.random() * 25000);
     };
     playChord();
   }
@@ -276,9 +293,9 @@ export class AudioEngine {
       this.musicTimer = null;
     }
     if (this.musicGain && this.ctx) {
-      this.musicGain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 2);
+      this.musicGain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 4);
       const mg = this.musicGain;
-      setTimeout(() => mg.disconnect(), 3000);
+      setTimeout(() => mg.disconnect(), 8000);
       this.musicGain = undefined;
     }
   }

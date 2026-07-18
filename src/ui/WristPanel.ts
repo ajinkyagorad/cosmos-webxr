@@ -1,13 +1,27 @@
-// In-XR UI: left-wrist canvas panel (speed + target + quick toggles) and a floating
-// reticle info panel. Buttons are clicked with the opposite controller ray (or pinch).
+// In-XR panel: full functionality — speed/target, jump, Return Home, Back, destinations
+// (paged), all layer toggles (incl. skybox), settings (vignette/turn/music/volume/elevation).
+// Attachable to the left wrist or pinched off to float fixed in space (grab again to re-attach).
 import * as THREE from "three";
 import type { Updatable, App } from "../core/App";
 import type { Navigation } from "../controls/Navigation";
-import type { Selection } from "../scene/Selection";
+import type { Selection, Selectable } from "../scene/Selection";
 import { settings } from "./Settings";
-import { formatSpeed, PC_IN_KM } from "../util/astro";
+import { formatSpeed, formatDistancePC, PC_IN_KM } from "../util/astro";
 
-interface WristButton { id: string; label: string; x: number; y: number; w: number; h: number; }
+interface Btn { id: string; label: string; x: number; y: number; w: number; h: number; active?: boolean; dim?: boolean; }
+type Tab = "main" | "dest" | "layers" | "settings";
+
+const LAYER_KEYS: { key: string; label: string }[] = [
+  { key: "labels", label: "Labels" },
+  { key: "orbits", label: "Orbits" },
+  { key: "layerStars", label: "Stars" },
+  { key: "layerExoplanets", label: "Exoplanets" },
+  { key: "layerDSO", label: "Deep-sky" },
+  { key: "layerMissions", label: "Missions" },
+  { key: "layerCompact", label: "BH/Pulsars" },
+  { key: "layerSkybox", label: "Skybox" },
+  { key: "layerCinematic", label: "✦ Cinematic" },
+];
 
 export class WristPanel implements Updatable {
   private app: App;
@@ -17,8 +31,15 @@ export class WristPanel implements Updatable {
   private canvas: HTMLCanvasElement;
   private ctx2d: CanvasRenderingContext2D;
   private tex: THREE.CanvasTexture;
-  private buttons: WristButton[] = [];
+  private buttons: Btn[] = [];
   private hoverBtn: string | null = null;
+  private tab: Tab = "main";
+  private page = 0;
+  private destinations: { name: string; sel: Selectable }[] = [];
+  private attachParent: THREE.Object3D | null = null;
+  private attachPos = new THREE.Vector3(0.02, 0.06, 0.03);
+  private attachRot = new THREE.Euler(-1.1, 0.3, 0.4);
+  detached = false;
   onHover: (() => void) | null = null;
 
   constructor(app: App, nav: Navigation, selection: Selection) {
@@ -26,38 +47,48 @@ export class WristPanel implements Updatable {
     this.nav = nav;
     this.selection = selection;
     this.canvas = document.createElement("canvas");
-    this.canvas.width = 512; this.canvas.height = 384;
+    this.canvas.width = 512; this.canvas.height = 640;
     this.ctx2d = this.canvas.getContext("2d")!;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.24, 0.18),
+      new THREE.PlaneGeometry(0.24, 0.3),
       new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, side: THREE.DoubleSide }),
     );
     this.mesh.visible = false;
-    this.defineButtons();
   }
 
   /** Attach to the left controller grip (called once XR starts). */
   attach(parent: THREE.Object3D) {
+    this.attachParent = parent;
     parent.add(this.mesh);
-    this.mesh.position.set(0.02, 0.06, 0.03);
-    this.mesh.rotation.set(-1.1, 0.3, 0.4);
+    this.mesh.position.copy(this.attachPos);
+    this.mesh.rotation.copy(this.attachRot);
+    this.mesh.scale.setScalar(1);
     this.mesh.visible = true;
+    this.detached = false;
   }
 
-  private defineButtons() {
-    const bw = 150, bh = 54, m = 12;
-    this.buttons = [
-      { id: "labels", label: "Labels", x: m, y: 250, w: bw, h: bh },
-      { id: "orbits", label: "Orbits", x: m + bw + m, y: 250, w: bw, h: bh },
-      { id: "music", label: "Music", x: m + (bw + m) * 2, y: 250, w: bw, h: bh },
-      { id: "jump", label: "JUMP", x: m, y: 250 + bh + m, w: bw * 2 + m, h: bh },
-      { id: "brake", label: "Brake", x: m + (bw + m) * 2, y: 250 + bh + m, w: bw, h: bh },
-    ];
+  /** Detach so it floats fixed in the universe; call again to re-attach to the wrist. */
+  togglePin() {
+    if (!this.attachParent) return;
+    if (!this.detached) {
+      this.app.universe.attach(this.mesh); // keeps world transform, rides the floating origin
+      this.detached = true;
+    } else {
+      this.attachParent.attach(this.mesh);
+      this.mesh.position.copy(this.attachPos);
+      this.mesh.rotation.copy(this.attachRot);
+      this.mesh.scale.setScalar(1);
+      this.detached = false;
+    }
   }
 
-  /** Ray (in world space) → button id if it hits the panel. */
+  setDestinations(items: { name: string; sel: Selectable }[]) {
+    this.destinations = items;
+  }
+
+  /** Ray (world space) → button id if it hits the panel. */
   intersect(raycaster: THREE.Raycaster): string | null {
     if (!this.mesh.visible) return null;
     const hits = raycaster.intersectObject(this.mesh, false);
@@ -73,14 +104,37 @@ export class WristPanel implements Updatable {
   }
 
   press(id: string) {
+    if (id.startsWith("tab:")) { this.tab = id.slice(4) as Tab; this.page = 0; return; }
+    if (id.startsWith("page:")) {
+      const pages = Math.max(1, Math.ceil(this.destinations.length / this.perPage()));
+      this.page = (this.page + (id.endsWith("next") ? 1 : pages - 1)) % pages;
+      return;
+    }
+    if (id.startsWith("dest:")) {
+      const d = this.destinations[parseInt(id.slice(5))];
+      if (d) {
+        this.selection.select(d.sel);
+        this.nav.quickJump(d.sel); // real-travel jump straight from the panel
+        this.tab = "main";
+      }
+      return;
+    }
+    if (id.startsWith("layer:")) { settings.toggle(id.slice(6) as never); return; }
     switch (id) {
-      case "labels": settings.toggle("labels"); break;
-      case "orbits": settings.toggle("orbits"); break;
-      case "music": settings.toggle("ambientMusic"); break;
-      case "jump":
-        if (this.selection.target) this.nav.quickJump(this.selection.target);
-        break;
-      case "brake": this.nav.velocity.multiplyScalar(0.1); break;
+      case "jump": if (this.selection.target) this.nav.quickJump(this.selection.target); break;
+      case "brake": this.nav.velocity.multiplyScalar(0.05); break;
+      case "home": this.nav.goHome(); break;
+      case "back": this.nav.goBack(); break;
+      case "pin": this.togglePin(); break;
+      case "set:vignette": settings.toggle("vignette"); break;
+      case "set:snapTurn": settings.toggle("snapTurn"); break;
+      case "set:music": settings.toggle("ambientMusic"); break;
+      case "vol:-1": settings.set("masterVolume", Math.max(0, settings.get("masterVolume") - 0.1)); break;
+      case "vol:1": settings.set("masterVolume", Math.min(1, settings.get("masterVolume") + 0.1)); break;
+      case "elev:-1": settings.set("elevationExaggeration", Math.max(0, settings.get("elevationExaggeration") - 1)); break;
+      case "elev:1": settings.set("elevationExaggeration", Math.min(10, settings.get("elevationExaggeration") + 1)); break;
+      case "size:-1": settings.set("planetSizeExaggeration", Math.max(50, settings.get("planetSizeExaggeration") / 1.5)); break;
+      case "size:1": settings.set("planetSizeExaggeration", Math.min(3000, settings.get("planetSizeExaggeration") * 1.5)); break;
     }
   }
 
@@ -91,66 +145,126 @@ export class WristPanel implements Updatable {
     }
   }
 
+  private perPage() { return 6; }
+
+  /* ------------------------------ rendering ------------------------------ */
+
+  private btn(b: Btn) {
+    const g = this.ctx2d;
+    g.fillStyle = this.hoverBtn === b.id ? "rgba(125,180,255,0.55)"
+      : b.active ? "rgba(125,180,255,0.30)" : "rgba(30,45,75,0.85)";
+    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 10); g.fill();
+    g.strokeStyle = "rgba(125,180,255,0.6)"; g.lineWidth = 2; g.stroke();
+    g.fillStyle = b.dim ? "#8fa3c0" : "#eaf2ff";
+    g.font = "600 23px system-ui";
+    g.textAlign = "center";
+    const label = b.label.length > 20 ? b.label.slice(0, 19) + "…" : b.label;
+    g.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 8);
+    g.textAlign = "left";
+    this.buttons.push(b);
+  }
+
   update(_dt: number, _t: number) {
     if (!this.mesh.visible) return;
     const g = this.ctx2d;
     const W = this.canvas.width, H = this.canvas.height;
     g.clearRect(0, 0, W, H);
-    g.fillStyle = "rgba(8,14,28,0.88)";
-    g.beginPath();
-    g.roundRect(0, 0, W, H, 22);
-    g.fill();
-    g.strokeStyle = "rgba(125,180,255,0.5)";
-    g.lineWidth = 2;
-    g.stroke();
+    g.fillStyle = "rgba(8,14,28,0.9)";
+    g.beginPath(); g.roundRect(0, 0, W, H, 22); g.fill();
+    g.strokeStyle = "rgba(125,180,255,0.5)"; g.lineWidth = 2; g.stroke();
+    this.buttons = [];
 
-    // Speed block
+    // Tab bar
+    const tabs: [Tab, string][] = [["main", "MAIN"], ["dest", "DEST"], ["layers", "LAYERS"], ["settings", "SET"]];
+    tabs.forEach(([id, label], i) => {
+      this.btn({ id: `tab:${id}`, label, x: 12 + i * 123, y: 10, w: 116, h: 44, active: this.tab === id });
+    });
+
+    if (this.tab === "main") this.renderMain();
+    else if (this.tab === "dest") this.renderDest();
+    else if (this.tab === "layers") this.renderLayers();
+    else this.renderSettings();
+
+    this.tex.needsUpdate = true;
+  }
+
+  private renderMain() {
+    const g = this.ctx2d;
     const spd = formatSpeed(this.nav.speedUnits, this.nav.kmPerUnit);
-    g.fillStyle = "#8fa3c0";
-    g.font = "600 20px system-ui";
-    g.fillText("VELOCITY", 18, 36);
-    g.fillStyle = "#eaf2ff";
-    g.font = "700 40px system-ui";
-    g.fillText(spd.value, 18, 78);
-    g.fillStyle = "#8fa3c0";
-    g.font = "400 20px system-ui";
-    g.fillText(spd.sub, 18, 106);
-    g.fillText(this.app.mode.toUpperCase(), 360, 36);
+    g.fillStyle = "#8fa3c0"; g.font = "600 20px system-ui";
+    g.fillText("VELOCITY", 18, 88);
+    g.fillStyle = "#eaf2ff"; g.font = "700 42px system-ui";
+    g.fillText(spd.value, 18, 128);
+    g.fillStyle = "#8fa3c0"; g.font = "400 20px system-ui";
+    g.fillText(spd.sub, 18, 154);
+    g.fillText(this.app.mode.toUpperCase(), 380, 88);
 
-    // Target block
-    g.fillStyle = "#8fa3c0";
-    g.font = "600 20px system-ui";
-    g.fillText("TARGET", 18, 152);
-    g.fillStyle = "#7db4ff";
-    g.font = "700 30px system-ui";
+    g.fillStyle = "#8fa3c0"; g.font = "600 20px system-ui";
+    g.fillText("TARGET", 18, 200);
+    g.fillStyle = "#7db4ff"; g.font = "700 30px system-ui";
     const tname = this.selection.target ? this.selection.target.name : "—";
-    g.fillText(tname.length > 22 ? tname.slice(0, 21) + "…" : tname, 18, 188);
+    g.fillText(tname.length > 20 ? tname.slice(0, 19) + "…" : tname, 18, 234);
     if (this.selection.target) {
       const tp = this.selection.getWorldPosition(this.selection.target, new THREE.Vector3());
-      const d = tp.distanceTo(this.app.camera.getWorldPosition(new THREE.Vector3()));
-      g.fillStyle = "#8fa3c0";
-      g.font = "400 20px system-ui";
-      g.fillText(`${(d * PC_IN_KM / 1.496e8).toExponential(2)} AU`, 18, 218);
+      const dUni = tp.sub(this.app.universe.position).distanceTo(this.nav.universePos(new THREE.Vector3()));
+      g.fillStyle = "#8fa3c0"; g.font = "400 20px system-ui";
+      g.fillText(formatDistancePC(Math.abs(dUni)), 18, 262);
+      void PC_IN_KM;
     }
 
-    // Buttons
-    for (const b of this.buttons) {
-      const active =
-        (b.id === "labels" && settings.get("labels")) ||
-        (b.id === "orbits" && settings.get("orbits")) ||
-        (b.id === "music" && settings.get("ambientMusic"));
-      g.fillStyle = this.hoverBtn === b.id ? "rgba(125,180,255,0.5)" : active ? "rgba(125,180,255,0.3)" : "rgba(30,45,75,0.8)";
-      g.beginPath();
-      g.roundRect(b.x, b.y, b.w, b.h, 10);
-      g.fill();
-      g.strokeStyle = "rgba(125,180,255,0.6)";
-      g.stroke();
-      g.fillStyle = "#eaf2ff";
-      g.font = "600 24px system-ui";
-      g.textAlign = "center";
-      g.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 8);
-      g.textAlign = "left";
-    }
-    this.tex.needsUpdate = true;
+    const y = 290, bw = 232, bh = 62, m = 14;
+    this.btn({ id: "jump", label: "⟶ JUMP", x: 12, y, w: bw, h: bh, active: !!this.selection.target });
+    this.btn({ id: "brake", label: "◼ BRAKE", x: 12 + bw + m, y, w: bw, h: bh });
+    this.btn({ id: "home", label: "⌂ HOME", x: 12, y: y + bh + m, w: bw, h: bh });
+    this.btn({ id: "back", label: "⏮ BACK", x: 12 + bw + m, y: y + bh + m, w: bw, h: bh, dim: !this.nav.hasBreadcrumbs });
+    this.btn({ id: "pin", label: this.detached ? "📌 Attach to wrist" : "📌 Detach (float)", x: 12, y: y + (bh + m) * 2, w: bw * 2 + m, h: bh, active: this.detached });
+    g.fillStyle = "#5c6f8d"; g.font = "400 17px system-ui";
+    g.fillText("Pinch-hold on panel = detach/attach", 18, y + (bh + m) * 2 + bh + 40);
+  }
+
+  private renderDest() {
+    const g = this.ctx2d;
+    g.fillStyle = "#8fa3c0"; g.font = "600 19px system-ui";
+    const pages = Math.max(1, Math.ceil(this.destinations.length / this.perPage()));
+    g.fillText(`DESTINATIONS  ${this.page + 1}/${pages}`, 18, 88);
+    const start = this.page * this.perPage();
+    const items = this.destinations.slice(start, start + this.perPage());
+    items.forEach((d, i) => {
+      this.btn({ id: `dest:${start + i}`, label: d.name, x: 12, y: 106 + i * 66, w: 488, h: 56 });
+    });
+    this.btn({ id: "page:prev", label: "◀ Prev", x: 12, y: 520, w: 238, h: 56 });
+    this.btn({ id: "page:next", label: "Next ▶", x: 262, y: 520, w: 238, h: 56 });
+  }
+
+  private renderLayers() {
+    const g = this.ctx2d;
+    g.fillStyle = "#8fa3c0"; g.font = "600 19px system-ui";
+    g.fillText("LAYERS", 18, 88);
+    LAYER_KEYS.forEach((l, i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      this.btn({
+        id: `layer:${l.key}`, label: l.label,
+        x: 12 + col * 250, y: 106 + row * 70, w: 238, h: 58,
+        active: settings.get(l.key as never) as boolean,
+      });
+    });
+  }
+
+  private renderSettings() {
+    const g = this.ctx2d;
+    g.fillStyle = "#8fa3c0"; g.font = "600 19px system-ui";
+    g.fillText("SETTINGS", 18, 88);
+    this.btn({ id: "set:vignette", label: "Vignette", x: 12, y: 106, w: 238, h: 58, active: settings.get("vignette") });
+    this.btn({ id: "set:snapTurn", label: "Snap turn", x: 262, y: 106, w: 238, h: 58, active: settings.get("snapTurn") });
+    this.btn({ id: "set:music", label: "Music", x: 12, y: 176, w: 238, h: 58, active: settings.get("ambientMusic") });
+    const vol = Math.round(settings.get("masterVolume") * 100);
+    this.btn({ id: "vol:-1", label: "Vol −", x: 262, y: 176, w: 113, h: 58 });
+    this.btn({ id: "vol:1", label: `Vol + ${vol}%`, x: 387, y: 176, w: 113, h: 58 });
+    const elev = settings.get("elevationExaggeration").toFixed(0);
+    this.btn({ id: "elev:-1", label: "Elev −", x: 12, y: 246, w: 238, h: 58 });
+    this.btn({ id: "elev:1", label: `Elev + (${elev}×)`, x: 262, y: 246, w: 238, h: 58 });
+    const size = settings.get("planetSizeExaggeration").toFixed(0);
+    this.btn({ id: "size:-1", label: "Planet size −", x: 12, y: 316, w: 238, h: 58 });
+    this.btn({ id: "size:1", label: `Size + (${size}×)`, x: 262, y: 316, w: 238, h: 58 });
   }
 }

@@ -64,7 +64,26 @@ export class DesktopControls implements Updatable {
       case "KeyN":
         settings.toggle("labels");
         break;
+      case "Home":
+        this.nav.goHome();
+        break;
+      case "Backspace":
+        this.nav.goBack();
+        break;
     }
+  }
+
+  /**
+   * Rotate the view toward a world-space direction (used by FTL arrival so you
+   * always come out of a jump facing your destination).
+   */
+  orientToward(dirWorld: THREE.Vector3, alpha: number) {
+    const yawT = Math.atan2(-dirWorld.x, -dirWorld.z);
+    const pitchT = Math.asin(THREE.MathUtils.clamp(dirWorld.y, -1, 1));
+    // shortest-arc yaw interpolation
+    const dYaw = Math.atan2(Math.sin(yawT - this.yaw), Math.cos(yawT - this.yaw));
+    this.yaw += dYaw * alpha;
+    this.pitch += (pitchT - this.pitch) * alpha;
   }
 
   update(_dt: number, _t: number) {

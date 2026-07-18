@@ -13,6 +13,7 @@ export interface SettingsState {
   layerMissions: boolean;
   layerCompact: boolean;
   layerCinematic: boolean;
+  layerSkybox: boolean;
   // solar system
   labels: boolean;
   orbits: boolean;
@@ -37,6 +38,7 @@ const DEFAULTS: SettingsState = {
   layerMissions: true,
   layerCompact: true,
   layerCinematic: false,
+  layerSkybox: true,
   labels: true,
   orbits: true,
   planetSizeExaggeration: 800,

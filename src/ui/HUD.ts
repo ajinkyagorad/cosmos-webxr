@@ -55,6 +55,11 @@ export class HUD {
       settings.toggle("muted");
       $("btn-mute").classList.toggle("active", settings.get("muted"));
     };
+    $("btn-home").onclick = () => { this.nav.goHome(); this.audio.playTick(1100); };
+    $("btn-back").onclick = () => {
+      if (!this.nav.goBack()) this.setHint("No breadcrumbs yet — travel or jump first");
+      else this.audio.playTick(1100);
+    };
     document.querySelectorAll(".close-btn").forEach((b) => {
       b.addEventListener("click", () => $( (b as HTMLElement).dataset.close! ).classList.add("hidden"));
     });
@@ -124,6 +129,7 @@ export class HUD {
       { key: "layerDSO", label: "Deep-sky objects (OpenNGC)" },
       { key: "layerMissions", label: "Missions & probes" },
       { key: "layerCompact", label: "Black holes & neutron stars" },
+      { key: "layerSkybox", label: "Sky backdrop (Gaia all-sky)" },
       { key: "layerCinematic", label: "✦ Cinematic universes (fiction)" },
       { key: "labels", label: "Labels" },
       { key: "orbits", label: "Orbit lines" },

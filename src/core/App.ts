@@ -100,11 +100,18 @@ export class App {
     }
   }
 
-  /** Floating origin: keep the rig near 0,0,0 by shifting the universe the other way. */
+  /**
+   * Floating origin: keep the rig within 1 unit of 0,0,0 by shifting the universe
+   * the other way. A tight threshold keeps every rendered coordinate tiny, which is
+   * what actually kills float32 jitter at kpc–Mpc scales: all matrix translation
+   * cancellation happens against near-zero values. Recentering is a cheap uniform
+   * translation of one parent group; every layer (stars, DSOs, solar system,
+   * exoplanets, missions, labels, markers) rides it identically.
+   */
   private recenter() {
     const p = this.rig.position;
     const d2 = p.lengthSq();
-    if (d2 > 32 * 32) {
+    if (d2 > 1.0) {
       this.universe.position.sub(p);
       this.originOffset.add(p);
       this.rig.position.set(0, 0, 0);

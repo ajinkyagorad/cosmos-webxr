@@ -249,18 +249,25 @@ export class SolarSystem implements Updatable {
   toSelectables(): Selectable[] {
     const items: Selectable[] = [{
       id: "sun", name: "Sun", kind: "star", object: this.sun,
-      radiusWorld: this.sunRadiusWorld(),
+      radiusWorld: this.sunRadiusWorld(), solid: true,
       describe: () => `<b>Sun</b><br>G-type main-sequence star<br>Radius: 695,700 km<br><span class="dim">NASA fact sheet</span>`,
     }];
     for (const p of this.planets) {
       items.push({
         id: `planet-${p.def.name}`, name: p.def.name, kind: "planet", object: p.mesh,
-        radiusWorld: p.radiusWorld,
+        radiusWorld: p.radiusWorld, solid: true,
         describe: () =>
           `<b>${esc(p.def.name)}</b><br>Radius: ${p.def.radiusKm.toLocaleString()} km<br>` +
           `Semi-major axis: ${p.def.semiMajorAU} AU<br>Axial tilt: ${p.def.tiltDeg}°<br>` +
           `Rotation period: ${p.def.rotationHours} h<br>Orbital period: ${p.def.orbitDays.toLocaleString()} d<br>` +
           `<span class="dim">NASA Planetary Fact Sheet</span>`,
+      });
+    }
+    for (const m of this.moonNodes) {
+      items.push({
+        id: `moon-${m.mesh.name}`, name: m.mesh.name, kind: "moon", object: m.mesh,
+        radiusWorld: m.mesh.getWorldScale(new THREE.Vector3()).x, solid: true,
+        describe: () => `<b>${esc(m.mesh.name)}</b><br>Radius: ${m.radiusKm.toLocaleString()} km<br>Semi-major axis: 384,400 km<br><span class="dim">NASA fact sheet</span>`,
       });
     }
     return items;

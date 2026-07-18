@@ -53,11 +53,46 @@ export class XRControls implements Updatable {
       laserGeo.rotateX(-Math.PI / 2);
       const laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0x7db4ff, transparent: true, opacity: 0.5 }));
       (c as unknown as THREE.Group).add(laser);
+      // Simple controller body so the user sees their controllers.
+      const body = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.016, 0.07, 4, 10),
+        new THREE.MeshStandardMaterial({ color: 0x2a3550, roughness: 0.6, metalness: 0.3 }),
+      );
+      body.rotation.x = Math.PI / 2.6;
+      (c as unknown as THREE.Group).add(body);
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.02, 0.003, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0x7db4ff, transparent: true, opacity: 0.7 }),
+      );
+      ring.position.set(0, 0.02, -0.02);
+      ring.rotation.x = Math.PI / 3;
+      (c as unknown as THREE.Group).add(ring);
     }
   }
 
   private wasPressed(id: string): boolean {
     return !!this.prevButtons[id];
+  }
+
+  /** Tap = short action; hold ≥0.9 s = long action (fires once per hold). */
+  private holdState: Record<string, { t: number; fired: boolean }> = {};
+  private handleHoldButton(
+    hand: "left" | "right", btnIdx: number, pressed: boolean, dt: number,
+    onTap: () => void, onHold: () => void,
+  ) {
+    const key = `${hand}:${btnIdx}`;
+    const st = (this.holdState[key] ??= { t: 0, fired: false });
+    if (pressed) {
+      st.t += dt;
+      if (st.t >= 0.9 && !st.fired) {
+        st.fired = true;
+        onHold();
+      }
+    } else {
+      if (st.t > 0 && st.t < 0.5 && !st.fired) onTap();
+      st.t = 0;
+      st.fired = false;
+    }
   }
 
   update(dt: number, _t: number) {
@@ -98,9 +133,13 @@ export class XRControls implements Updatable {
       } else if (hand === "left") {
         stick.lx = ax[2] ?? 0; stick.ly = ax[3] ?? 0;
         brake = bt[0]?.value ?? 0;
-        // X = labels, Y = orbits
-        if (b(4) && !this.wasPressed(id(4))) { settings.toggle("labels"); this.pulse("left", 0.3, 30); }
-        if (b(5) && !this.wasPressed(id(5))) { settings.toggle("orbits"); this.pulse("left", 0.3, 30); }
+        // X = labels (tap) / BACK (hold 0.9 s) · Y = orbits (tap) / RETURN HOME (hold 0.9 s)
+        this.handleHoldButton("left", 4, b(4), dt,
+          () => { settings.toggle("labels"); this.pulse("left", 0.3, 30); },
+          () => { if (this.nav.goBack()) { this.pulse("left", 0.8, 150); } });
+        this.handleHoldButton("left", 5, b(5), dt,
+          () => { settings.toggle("orbits"); this.pulse("left", 0.3, 30); },
+          () => { this.nav.goHome(); this.pulse("left", 0.8, 150); });
         this.handleGrab(src, "left", b(1), dt);
       }
     }

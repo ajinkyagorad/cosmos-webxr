@@ -93,29 +93,46 @@ src/
     Missions.ts          Probes parented to real host bodies / heliocentric positions
     CinematicLayer.ts    Fictional overlay (segregated, off by default)
     Labels.ts            troika-three-text SDF labels (canvas-sprite fallback)
-    Selection.ts         Angular ray-picking registry + target marker
-    WarpEffect.ts        Star-stretch tunnel during FTL
+    Selection.ts         Angular ray-picking registry + 3D crosshair marker
   controls/
-    Navigation.ts        Spaceship physics: inertia/thrust/brake + FTL jump state machine
-    DesktopControls.ts   Pointer lock, WASD, keys
-    XRControls.ts        Sticks/triggers/buttons, grab-drag, haptics
-    HandControls.ts      Pinch select, two-pinch pull-to-fly, open-palm brake
+    Navigation.ts        Spaceship physics + REAL-travel FTL, speed caps, breadcrumbs, home
+    DesktopControls.ts   Pointer lock, WASD, keys, arrival orientation
+    XRControls.ts        Sticks/triggers/buttons, tap-vs-hold buttons, grab-drag, haptics
+    HandControls.ts      Hand models, smoothed aim laser + cursor, pinch gestures
   audio/AudioEngine.ts   100% procedural WebAudio (hum, warp, beacon, generative pad)
-  ui/                    Landing screen, desktop HUD, wrist panel, settings store
+  ui/                    Landing screen, desktop HUD, full wrist panel, settings store
 scripts/fetch-data.mjs   Data pipeline (see above)
-scripts/smoke-test.mjs   CDP-driven headless render/interaction test
+scripts/smoke-test.mjs   CDP-driven headless render/interaction/jump test
 ```
 
-**Scale management.** One world unit = 1 parsec in the galactic frame. The solar system lives at
-the origin with its own base scale (1 AU = 0.02 units) plus user exaggeration sliders for orbit
-distances and planet sizes; a floating origin re-centers the universe around the camera every
-32 units so planetary surfaces and Mpc-scale structures coexist with a logarithmic depth buffer.
-The HUD speed readout converts using the local frame scale (AU-scale near the Sun, pc-scale
-outside).
+**Scale management & positional precision.** One world unit = 1 parsec in the galactic frame.
+The solar system lives at the origin with its own base scale (1 AU = 0.02 units) plus user
+exaggeration sliders for orbit distances and planet sizes. A **floating origin re-centers the
+universe around the camera every 1 unit** — all rendered coordinates stay tiny, so float32
+jitter never appears at any scale (planetary surfaces to Mpc), for every layer (stars, DSOs,
+exoplanets, missions, labels) simultaneously. A logarithmic depth buffer plus local-frame speed
+conversion (AU-scale near the Sun, pc-scale outside) completes the multiscale pipeline.
 
-**Skybox alignment.** The Gaia equirectangular map is wrapped on a BackSide sphere; with
-three.js `SphereGeometry` mapping (`u = 0.5 − RA/2π`), the sphere is rotated −266.4° about Y so
-the texture's galactic center sits at the real Sgr A* direction (RA 266.405°, Dec −29.008°).
+**Never get lost.** Speed is hard-capped (2·10⁴ units/s) and further soft-capped by proximity
+to the nearest solid body, so you can't zoom into the void. **Return Home** (⌂ button, `Home`
+key, hold `Y`, wrist panel) warps you back to the solar system from anywhere; a 20-entry
+**breadcrumb** trail (`Backspace`, hold `X`, ⏮ button) backtracks. Jumps track moving targets
+live and end with the ship oriented facing the destination. A collision floor at 1.05× radius
+keeps you from falling through planets while still allowing near-surface approaches.
+
+**FTL is real travel.** There is no fake warp animation: a jump accelerates the ship along the
+real trajectory through the actual catalog star field (the HUD speed readout climbs to
+thousands of c, stars genuinely stream past via real parallax), then decelerates on approach.
+
+**Skybox behavior.** The Gaia all-sky map is double-sided with `depthTest:false` and renders
+first, so it never occludes anything — inside or outside the sphere. It fades out beyond
+~25–60 kpc so the procedural spiral disk (real galactic-plane orientation, core glow at the
+true Sgr A* position) becomes the galaxy's visual. In passthrough AR the skybox is OFF by
+default (toggleable in LAYERS).
+
+**Skybox alignment.** The Gaia equirectangular map is wrapped on a sphere; with three.js
+`SphereGeometry` mapping (`u = 0.5 − RA/2π`), the sphere is rotated −266.4° about Y so the
+texture's galactic center sits at the real Sgr A* direction (RA 266.405°, Dec −29.008°).
 
 ## Controls & gestures
 
@@ -129,8 +146,12 @@ the texture's galactic center sits at the real Sgr A* direction (RA 266.405°, D
 | `Space` (hold) | Brake |
 | Scroll | Adjust max thrust (log scale) |
 | `J` (hold) | Charge & FTL-jump to selected target |
+| `Home` | Return home (solar system) |
+| `Backspace` | Backtrack (breadcrumb) |
 | `O` / `N` | Toggle orbits / labels |
 | `D` / `L` / `H` / `M` | Destinations / layers / help / mute |
+
+HUD buttons: ⌂ home · ⏮ back · ? help · ✦ destinations · ☰ layers · ⚙ settings · ♪ mute.
 
 ### XR controllers
 | Input | Action |
@@ -141,16 +162,19 @@ the texture's galactic center sits at the real Sgr A* direction (RA 266.405°, D
 | Left trigger | Brake |
 | `A` | Select object under ray |
 | `B` | Jump to selected |
-| `X` / `Y` | Labels / orbits |
+| `X` tap / hold | Toggle labels / **Back** (breadcrumb) |
+| `Y` tap / hold | Toggle orbits / **Return Home** |
 | Grip + pull | Grab & drag the universe |
-| Left wrist | Wrist panel (speed, target, buttons; click with other ray) |
+| Left wrist | **Full panel**: speed/target, JUMP, BRAKE, HOME, BACK, destinations (paged), all layer toggles (incl. skybox), settings (vignette, snap turn, music, volume, elevation, planet size) |
 
 Haptics: thrust rumble ∝ acceleration, jump-charge crescendo, UI hover ticks, arrival thump.
 
 ### Hand tracking (degrades gracefully to controllers)
 | Gesture | Action |
 |---|---|
-| Pinch | Ray select |
+| Aim | Visible hand models; smoothed wrist→middle-MCP ray with laser + cursor dot and angular magnetism |
+| Pinch | Select under cursor / press panel button |
+| Pinch-hold on panel | Detach panel to float in space / re-attach to wrist |
 | Two-hand pinch & pull | Fly — pull space toward you (speed ∝ pull velocity) |
 | Open palm | Gentle brake |
 
@@ -163,14 +187,17 @@ Haptics: thrust rumble ∝ acceleration, jump-charge crescendo, UI hover ticks, 
 
 ## Audio (all procedural — no files)
 
-Engine hum pitch/volume follows speed · warp charge riser + whoosh · arrival thump · UI ticks ·
-spatialized HRTF beacon ping on the selected target · optional **ambient generative music**
-(detuned sine voices → lowpass → procedural convolver reverb, slow random-walk chords from a
-minor-pentatonic set, very low volume). Master volume + mute in settings (`M`).
+Engine hum pitch/volume follows real speed (it climbs through the jump) · warp charge riser +
+whoosh · arrival thump · UI ticks · spatialized HRTF beacon ping on the selected target ·
+optional **ambient generative music** — consonant major/minor triads only, 10–16 s attacks,
+35–60 s chord changes with 20 s crossfades, warm lowpassed triangle+sine blend, ≤1 ¢ detune,
+very low default level. Master volume + mute in settings (`M`) and on the wrist panel.
 
 ## Verification
 
 `npm run build` and `npx tsc --noEmit` are both green. A CDP smoke test
-(`node scripts/smoke-test.mjs`, requires Chrome) boots the app headlessly, waits for real render
-frames, exercises destination selection, the FTL jump, HUD panels, and captures screenshots
-(see `docs/screenshots/`): zero console errors/exceptions.
+(`node scripts/smoke-test.mjs`, requires Chrome) boots the app headlessly and verifies:
+boot with zero console errors, a **jump round-trip** (Saturn → back to Earth, arrival within a
+few radii, facing the destination), thrust approach with collision floor, galaxy-scale views at
+100 pc / 1 kpc / 50 kpc, Return Home from 50 kpc, and breadcrumb Back (see
+`docs/screenshots/`).

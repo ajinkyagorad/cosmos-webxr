@@ -1,4 +1,4 @@
-// Target selection: registry of selectable objects + angular ray picking + target marker.
+// Target selection: registry of selectable objects + angular ray picking + 3D crosshair marker.
 import * as THREE from "three";
 import type { Updatable, App } from "../core/App";
 
@@ -11,6 +11,8 @@ export interface Selectable {
   object?: THREE.Object3D;
   /** World-space radius used for arrival distance + angular pick tolerance. */
   radiusWorld: number;
+  /** Solid bodies (planets/sun/moon): used for collision floor + gentle-approach speed caps. */
+  solid?: boolean;
   /** HTML description for the info panel. */
   describe: () => string;
 }
@@ -18,24 +20,63 @@ export interface Selectable {
 const _v = new THREE.Vector3();
 const _toObj = new THREE.Vector3();
 
+/**
+ * 3D crosshair targeting marker (Elite-style): a cube frame of 8 corner brackets with
+ * inward-pointing edges, gently pulsing, screen-size compensated.
+ */
+class CrosshairMarker {
+  group = new THREE.Group();
+  private mat: THREE.LineBasicMaterial;
+
+  constructor() {
+    this.mat = new THREE.LineBasicMaterial({
+      color: 0x8fc4ff, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+    });
+    // 8 corners of a unit cube; each corner has 3 short inward-pointing edges.
+    const verts: number[] = [];
+    const L = 0.22; // bracket arm length (fraction of half-size)
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+      verts.push(
+        sx, sy, sz, sx - Math.sign(sx) * L, sy, sz, // x arm
+        sx, sy, sz, sx, sy - Math.sign(sy) * L, sz, // y arm
+        sx, sy, sz, sx, sy, sz - Math.sign(sz) * L, // z arm
+      );
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(verts), 3));
+    const lines = new THREE.LineSegments(geo, this.mat);
+    lines.renderOrder = 60;
+    lines.frustumCulled = false;
+    this.group.add(lines);
+    this.group.visible = false;
+  }
+
+  /** Position/scale/rotate the marker around `center`, facing `camQuat`, at distance `dist`. */
+  place(center: THREE.Vector3, camQuat: THREE.Quaternion, dist: number, radiusWorld: number, t: number) {
+    this.group.position.copy(center);
+    this.group.quaternion.copy(camQuat);
+    // Half-size: at least 2.2× object radius, at least ~3% of view distance, pulsing gently.
+    const pulse = 1 + 0.06 * Math.sin(t * 2.6);
+    const half = Math.max(radiusWorld * 2.2, dist * 0.03) * pulse;
+    this.group.scale.setScalar(half);
+    this.mat.opacity = 0.55 + 0.3 * Math.sin(t * 3.2);
+  }
+
+  set visible(v: boolean) { this.group.visible = v; }
+  get visible() { return this.group.visible; }
+}
+
 export class Selection implements Updatable {
   private app: App;
   private items: Selectable[] = [];
   target: Selectable | null = null;
-  marker: THREE.Mesh;
+  marker = new CrosshairMarker();
   onTargetChanged: ((s: Selectable | null) => void) | null = null;
-  /** Max registry size is small enough (~1000) for on-demand angular scans. */
 
   constructor(app: App) {
     this.app = app;
-    const geo = new THREE.RingGeometry(0.85, 1, 48);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x7db4ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false,
-    });
-    this.marker = new THREE.Mesh(geo, mat);
-    this.marker.visible = false;
-    this.marker.renderOrder = 50;
-    this.app.scene.add(this.marker); // scene-level: we position it in world coords every frame
+    this.app.scene.add(this.marker.group); // scene-level: positioned in world coords each frame
   }
 
   registerMany(items: Selectable[]) {
@@ -56,8 +97,11 @@ export class Selection implements Updatable {
 
   clear() { this.select(null); }
 
-  /** Angular pick: find the registry object nearest to the ray within a tolerant cone. */
-  pickFromRay(raycaster: THREE.Raycaster): Selectable | null {
+  /**
+   * Angular pick with magnetism: find the registry object nearest to the ray within a
+   * tolerant cone. tolScale widens the cone (used for imprecise hand aim).
+   */
+  pickFromRay(raycaster: THREE.Raycaster, tolScale = 1): Selectable | null {
     const origin = raycaster.ray.origin;
     const dir = raycaster.ray.direction;
     let best: Selectable | null = null;
@@ -68,10 +112,14 @@ export class Selection implements Updatable {
       const dist = _toObj.length();
       if (dist < 1e-9) continue;
       const cosA = THREE.MathUtils.clamp(_toObj.dot(dir) / dist, -1, 1);
-      if (cosA < 0.5) continue; // behind or far off-axis
+      if (cosA < 0.4) continue; // behind or far off-axis
       const angle = Math.acos(cosA);
-      // Tolerance: at least 0.5°, up to 4°, scaled by object radius.
-      const tol = THREE.MathUtils.clamp(Math.atan((s.radiusWorld * 4) / dist), THREE.MathUtils.degToRad(0.5), THREE.MathUtils.degToRad(4));
+      // Tolerance: at least 0.5°, up to 4.5°, scaled by object radius (ray magnetism).
+      const tol = THREE.MathUtils.clamp(
+        Math.atan((s.radiusWorld * 4) / dist),
+        THREE.MathUtils.degToRad(0.5),
+        THREE.MathUtils.degToRad(4.5),
+      ) * tolScale;
       if (angle < tol && angle < bestScore) {
         bestScore = angle;
         best = s;
@@ -80,16 +128,32 @@ export class Selection implements Updatable {
     return best;
   }
 
-  update(dt: number, t: number) {
+  /**
+   * Nearest SOLID body to a universe-local point: { surfaceDist, radius }.
+   * Used by Navigation for the gentle-approach speed cap and collision floor.
+   */
+  nearestSolid(uniPos: THREE.Vector3): { surfaceDist: number; radius: number } {
+    let best = Infinity;
+    let bestR = 0.001;
+    const uni = this.app.universe.matrixWorld;
+    for (const s of this.items) {
+      if (!s.solid) continue;
+      if (s.object) s.object.getWorldPosition(_v);
+      else if (s.position) _v.copy(s.position).applyMatrix4(uni);
+      else continue;
+      // _v is world; convert to universe-local: world = uniPos + universe.position
+      _v.sub(this.app.universe.position);
+      const d = _v.distanceTo(uniPos) - s.radiusWorld;
+      if (d < best) { best = d; bestR = s.radiusWorld; }
+    }
+    return { surfaceDist: Math.max(best, 0), radius: bestR };
+  }
+
+  update(_dt: number, t: number) {
     if (!this.target) return;
     this.getWorldPosition(this.target, _v);
-    this.marker.position.copy(_v);
-    // Face camera & scale with distance so the ring stays readable.
-    this.marker.quaternion.copy(this.app.camera.getWorldQuaternion(new THREE.Quaternion()));
     const camPos = this.app.camera.getWorldPosition(_toObj);
     const d = _v.distanceTo(camPos);
-    const s = Math.max(this.target.radiusWorld * 1.6, d * 0.02);
-    this.marker.scale.setScalar(s);
-    (this.marker.material as THREE.MeshBasicMaterial).opacity = 0.65 + 0.3 * Math.sin(t * 3);
+    this.marker.place(_v, this.app.camera.getWorldQuaternion(new THREE.Quaternion()), d, this.target.radiusWorld, t);
   }
 }

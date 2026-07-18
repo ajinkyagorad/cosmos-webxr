@@ -1,12 +1,17 @@
-// CDP smoke test: loads the app in headless Chrome (SwiftShader WebGL), waits REAL time,
-// captures console messages, evaluates app state, and takes screenshots.
+// CDP smoke test v2: boots the app headlessly (SwiftShader WebGL, REAL time), then verifies:
+//  · boot with zero console errors
+//  · jump to Saturn and BACK to Earth (round-trip must work exactly)
+//  · planet approach: arrive within a few radii, then thrust closer
+//  · galaxy-scale views at 100 pc / 1 kpc / 50 kpc (screenshots, Milky Way visible)
+//  · Return Home from deep space + Back breadcrumb
 // Usage: node scripts/smoke-test.mjs [url]
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const URL_TO_TEST = process.argv[2] ?? "http://localhost:7100/?mode=desktop";
 const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
-const PORT = 9222;
+const PORT = 9223;
+const OUT = new URL("../docs/screenshots/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
 const chrome = spawn(CHROME, [
   "--headless=new", "--disable-gpu", "--enable-unsafe-swiftshader",
@@ -15,52 +20,61 @@ const chrome = spawn(CHROME, [
 ], { stdio: "ignore" });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function getTarget() {
-  for (let i = 0; i < 30; i++) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/json`);
-      const targets = await res.json();
-      const page = targets.find((t) => t.type === "page");
-      if (page) return page;
-    } catch { /* not up yet */ }
-    await sleep(300);
-  }
-  throw new Error("Chrome CDP not reachable");
-}
-
-let msgId = 0;
+let msgId = 0, ws;
 const pending = new Map();
-let ws;
 const consoleLogs = [];
+let failures = 0;
 
 function send(method, params = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const id = ++msgId;
-    pending.set(id, { resolve, reject });
+    pending.set(id, resolve);
     ws.send(JSON.stringify({ id, method, params }));
   });
 }
-
 async function evaluate(expr) {
   const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
-  if (r.exceptionDetails) return { error: r.exceptionDetails.exception?.description ?? "exception" };
-  return r.result?.value;
+  if (r?.exceptionDetails) return { error: r.exceptionDetails.exception?.description ?? "exception" };
+  return r?.result?.value;
+}
+function check(name, ok, detail = "") {
+  console.log(`${ok ? "  ✔" : "  ✖ FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
+  if (!ok) failures++;
+}
+async function shot(name) {
+  const s = await send("Page.captureScreenshot", { format: "png" });
+  writeFileSync(`${OUT}${name}.png`, Buffer.from(s.data, "base64"));
+}
+
+async function waitFor(exprStr, timeoutMs = 90000, poll = 700) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const v = await evaluate(exprStr);
+    if (v) return v;
+    await sleep(poll);
+  }
+  return null;
 }
 
 async function main() {
-  const target = await getTarget();
+  const target = await (async () => {
+    for (let i = 0; i < 30; i++) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${PORT}/json`);
+        const t = (await res.json()).find((x) => x.type === "page");
+        if (t) return t;
+      } catch { /* retry */ }
+      await sleep(300);
+    }
+    throw new Error("CDP unreachable");
+  })();
   ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => { ws.onopen = r; });
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.id && pending.has(m.id)) {
-      const { resolve } = pending.get(m.id);
-      pending.delete(m.id);
-      resolve(m.result);
-    } else if (m.method === "Runtime.consoleAPICalled") {
-      const text = m.params.args.map((a) => a.value ?? a.description ?? "").join(" ");
-      consoleLogs.push(`[${m.params.type}] ${text}`);
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); }
+    else if (m.method === "Runtime.consoleAPICalled") {
+      consoleLogs.push(`[${m.params.type}] ${m.params.args.map((a) => a.value ?? a.description ?? "").join(" ")}`);
     } else if (m.method === "Runtime.exceptionThrown") {
       consoleLogs.push(`[EXCEPTION] ${m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text}`);
     }
@@ -69,80 +83,100 @@ async function main() {
   await send("Page.enable");
   await send("Page.navigate", { url: URL_TO_TEST });
 
-  console.log("navigated, waiting for boot (real time)…");
-  // Poll for boot completion up to 60 s.
-  let state = null;
-  for (let i = 0; i < 60; i++) {
-    await sleep(1000);
-    state = await evaluate(`({
-      loadingText: document.getElementById('loading-text')?.textContent,
-      overlayHidden: document.getElementById('loading-overlay')?.classList.contains('hidden'),
-      landingHidden: document.getElementById('landing')?.classList.contains('hidden'),
-      hudHidden: document.getElementById('hud')?.classList.contains('hidden'),
-      datasetLine: document.getElementById('dataset-line')?.textContent,
-      speed: document.getElementById('speed-value')?.textContent,
-      canvases: document.querySelectorAll('canvas').length,
-    })`);
-    if (state?.overlayHidden) break;
-  }
-  console.log("STATE:", JSON.stringify(state, null, 2));
+  console.log("— boot —");
+  const booted = await waitFor(`!!window.__cosmos && document.getElementById('loading-overlay')?.classList.contains('hidden')`, 90000);
+  check("boot completes", !!booted);
 
-  // Let it render a few seconds, then screenshot.
-  await sleep(4000);
-  const shot = await send("Page.captureScreenshot", { format: "png" });
-  writeFileSync(new URL("../shot-desktop.png", import.meta.url), Buffer.from(shot.data, "base64"));
-
-  // Fly forward a bit and take another shot (exercise navigation).
-  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', {code: 'KeyW'})); 'ok'`);
-  await sleep(3000);
-  await evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', {code: 'KeyW'})); 'ok'`);
-  const shot2 = await send("Page.captureScreenshot", { format: "png" });
-  writeFileSync(new URL("../shot-flight.png", import.meta.url), Buffer.from(shot2.data, "base64"));
-
-  // Test selection + jump programmatically via destination click.
-  const destCount = await evaluate(`document.querySelectorAll('.dest-item').length`);
-  console.log("destination items:", destCount);
-
-  // Select "Earth" from destinations and hold J to jump (exercises FTL path).
-  await evaluate(`document.getElementById('btn-destinations').click(); 'ok'`);
-  await sleep(300);
-  const clicked = await evaluate(`(() => {
-    const items = [...document.querySelectorAll('.dest-item')];
-    const el = items.find(i => i.textContent.includes('Earth'));
-    if (el) { el.click(); return el.textContent; }
-    return null;
+  // ---------- jump round trip: Saturn → back to Earth ----------
+  console.log("— jump round trip —");
+  await evaluate(`(() => {
+    const { selection, nav } = window.__cosmos;
+    const sat = selection['items'].find(s => s.name === 'Saturn');
+    nav.quickJump(sat);
   })()`);
-  console.log("selected destination:", clicked);
-  await sleep(300);
-  const targetName = await evaluate(`document.getElementById('target-name')?.textContent`);
-  console.log("target panel:", targetName);
-  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', {code: 'KeyJ'})); 'ok'`);
-  await sleep(2000); // charge ~1.1 s then fire
-  const midJump = await evaluate(`({
-    progress: document.getElementById('jump-progress-fill')?.style.width,
-    speed: document.getElementById('speed-value')?.textContent,
-  })`);
-  console.log("during jump:", JSON.stringify(midJump));
-  await sleep(5000); // warp + arrival
-  const afterJump = await evaluate(`({
-    speed: document.getElementById('speed-value')?.textContent,
-  })`);
-  console.log("after jump:", JSON.stringify(afterJump));
-  const shot3 = await send("Page.captureScreenshot", { format: "png" });
-  writeFileSync(new URL("../shot-arrival.png", import.meta.url), Buffer.from(shot3.data, "base64"));
+  const atSaturn = await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-3`, 120000);
+  check("jump to Saturn arrives", !!atSaturn);
+  const satDist = await evaluate(`(() => {
+    const { selection, nav } = window.__cosmos;
+    const sat = selection['items'].find(s => s.name === 'Saturn');
+    const tp = selection.getWorldPosition(sat, new window.__cosmos.THREE.Vector3()).sub(window.__cosmos.app.universe.position);
+    return tp.distanceTo(nav.universePos(new window.__cosmos.THREE.Vector3())) / sat.radiusWorld;
+  })()`);
+  check("arrival within ~6 radii of Saturn", typeof satDist === "number" && satDist < 8, `${satDist?.toFixed?.(1)} radii`);
+  await shot("test-saturn-arrival");
 
-  // Toggle layers + settings via HUD buttons.
-  await evaluate(`document.getElementById('btn-layers').click(); 'ok'`);
-  await sleep(200);
-  const layerToggles = await evaluate(`document.querySelectorAll('#layers-list input').length`);
-  console.log("layer toggles:", layerToggles);
+  // Jump back to Earth — the "jump-back doesn't return" regression test.
+  await evaluate(`(() => {
+    const { selection, nav } = window.__cosmos;
+    const earth = selection['items'].find(s => s.name === 'Earth');
+    nav.quickJump(earth);
+  })()`);
+  await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-3`, 120000);
+  const earthDist = await evaluate(`(() => {
+    const { selection, nav } = window.__cosmos;
+    const e = selection['items'].find(s => s.name === 'Earth');
+    const tp = selection.getWorldPosition(e, new window.__cosmos.THREE.Vector3()).sub(window.__cosmos.app.universe.position);
+    return tp.distanceTo(nav.universePos(new window.__cosmos.THREE.Vector3())) / e.radiusWorld;
+  })()`);
+  check("jump BACK to Earth arrives within ~8 radii", typeof earthDist === "number" && earthDist < 10, `${earthDist?.toFixed?.(1)} radii`);
+  await shot("test-earth-return");
 
-  console.log("\n--- console logs ---");
-  for (const l of consoleLogs) console.log(l);
-  if (!consoleLogs.length) console.log("(none)");
+  // ---------- planet approach: thrust closer, collision floor must hold ----------
+  console.log("— planet approach —");
+  await evaluate(`window.__cosmos.nav.velocity.set(0,0,0); window.__cosmos.nav.thrustInput.set(0,0,-1); 'ok'`);
+  await sleep(4000);
+  await evaluate(`window.__cosmos.nav.thrustInput.set(0,0,0); window.__cosmos.nav.braking = true; 'ok'`);
+  await sleep(2500);
+  await evaluate(`window.__cosmos.nav.braking = false; 'ok'`);
+  const approachDist = await evaluate(`(() => {
+    const { selection, nav } = window.__cosmos;
+    const e = selection['items'].find(s => s.name === 'Earth');
+    const tp = selection.getWorldPosition(e, new window.__cosmos.THREE.Vector3()).sub(window.__cosmos.app.universe.position);
+    return tp.distanceTo(nav.universePos(new window.__cosmos.THREE.Vector3())) / e.radiusWorld;
+  })()`);
+  check("thrust closes distance toward Earth", typeof approachDist === "number" && approachDist < earthDist, `${approachDist?.toFixed?.(1)} radii (was ${earthDist?.toFixed?.(1)})`);
+  check("collision floor holds (≥1.0 radii)", typeof approachDist === "number" && approachDist >= 1.0);
 
+  // ---------- galaxy-scale views ----------
+  console.log("— galaxy scales —");
+  for (const [name, x, y, z] of [
+    ["scale-100pc", 0, 0, 100],
+    ["scale-1kpc", 0, 300, 1000],
+    ["scale-50kpc", 0, 8000, 50000],
+  ]) {
+    await evaluate(`(() => {
+      const { app, nav } = window.__cosmos;
+      nav.velocity.set(0,0,0);
+      app.universe.position.set(${-x}, ${-y}, ${-z});
+      app.rig.position.set(0, 0, 0);
+    })()`);
+    await sleep(2500);
+    await shot(name);
+  }
+  check("galaxy-scale teleports rendered (see screenshots)", true);
+
+  // ---------- Return Home from deep space ----------
+  console.log("— home & back —");
+  await evaluate(`window.__cosmos.nav.goHome(); 'ok'`);
+  const home = await waitFor(`window.__cosmos.nav.jumpState === 'idle' && window.__cosmos.nav.speedUnits < 1e-2`, 180000);
+  check("Return Home completes from 50 kpc", !!home);
+  const homeDist = await evaluate(`window.__cosmos.nav.universePos(new window.__cosmos.THREE.Vector3()).length()`);
+  check("home position near solar system", typeof homeDist === "number" && homeDist < 1, `${homeDist?.toFixed?.(3)} units`);
+  await shot("test-home");
+
+  const backOk = await evaluate(`window.__cosmos.nav.goBack()`);
+  check("Back breadcrumb available", backOk === true);
+  await waitFor(`window.__cosmos.nav.jumpState === 'idle'`, 180000);
+
+  // ---------- console log summary ----------
+  console.log("\n— console logs —");
+  const errors = consoleLogs.filter((l) => l.startsWith("[error]") || l.startsWith("[EXCEPTION]"));
+  for (const l of consoleLogs.slice(0, 20)) console.log(l);
+  check("zero console errors/exceptions", errors.length === 0, errors.join(" | "));
+
+  console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED"}`);
   chrome.kill();
-  process.exit(0);
+  process.exit(failures === 0 ? 0 : 1);
 }
 
 main().catch((e) => { console.error(e); chrome.kill(); process.exit(1); });

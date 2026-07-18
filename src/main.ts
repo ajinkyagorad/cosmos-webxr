@@ -15,8 +15,7 @@ import { MissionsLayer } from "./scene/Missions";
 import { CinematicLayer } from "./scene/CinematicLayer";
 import { LabelManager } from "./scene/Labels";
 import { Selection, type Selectable } from "./scene/Selection";
-import { WarpEffect } from "./scene/WarpEffect";
-import { Navigation } from "./controls/Navigation";
+import { Navigation, HOME_POS } from "./controls/Navigation";
 import { DesktopControls } from "./controls/DesktopControls";
 import { XRControls } from "./controls/XRControls";
 import { HandControls } from "./controls/HandControls";
@@ -25,6 +24,7 @@ import { HUD } from "./ui/HUD";
 import { WristPanel } from "./ui/WristPanel";
 import { Landing } from "./ui/Landing";
 import { formatDistancePC, PC_TO_LY } from "./util/astro";
+import { GALACTIC_CENTER_PC } from "./scene/MilkyWay";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -37,8 +37,9 @@ async function boot() {
 
   // ---------- scene layers ----------
   $("loading-text").textContent = "Building the universe…";
-  const milkyWay = new MilkyWay();
+  const milkyWay = new MilkyWay(app);
   app.universe.add(milkyWay.group);
+  app.addUpdatable(milkyWay);
 
   const solar = new SolarSystem(app);
   app.universe.add(solar.group);
@@ -100,6 +101,13 @@ async function boot() {
     labelQueue.push(labels.add(o.cn, anchor, { size: 2.0, color: "#b0ffc8" }));
   });
   for (const a of cinematic.getLabelAnchors()) labelQueue.push(labels.add(a.name, a.object, { size: 60, color: "#e0c8ff" }));
+  // Galactic-center beacon label so the Milky Way stays orientable at kpc scales.
+  {
+    const gcAnchor = new THREE.Object3D();
+    gcAnchor.position.copy(GALACTIC_CENTER_PC);
+    app.universe.add(gcAnchor);
+    labelQueue.push(labels.add("Milky Way · Galactic Center", gcAnchor, { size: 8, color: "#ffd9a0" }));
+  }
   await Promise.allSettled(labelQueue);
 
   // ---------- selection ----------
@@ -130,8 +138,7 @@ async function boot() {
   // ---------- navigation & effects ----------
   const nav = new Navigation(app, selection);
   app.addUpdatable(nav);
-  const warp = new WarpEffect(app.camera);
-  app.addUpdatable(warp);
+  // (No fake warp particles: jumps are real accelerated travel through the actual star field.)
 
   const hud = new HUD(app, nav, selection, audio);
   const desktop = new DesktopControls(app, nav, selection);
@@ -142,11 +149,12 @@ async function boot() {
   app.addUpdatable(hands);
   const wrist = new WristPanel(app, nav, selection);
   app.addUpdatable(wrist);
+  hands.wrist = wrist;
 
   // Selection picking (desktop click uses camera ray; XR uses controller/pinch ray).
   const pickRay = new THREE.Raycaster();
-  const doPick = (raycaster: THREE.Raycaster) => {
-    const hit = selection.pickFromRay(raycaster);
+  const doPick = (raycaster: THREE.Raycaster, tolScale = 1) => {
+    const hit = selection.pickFromRay(raycaster, tolScale);
     if (hit) selection.select(hit);
   };
   desktop.onRequestSelect = () => {
@@ -158,12 +166,41 @@ async function boot() {
     // Wrist panel buttons take priority over world selection.
     const btn = wrist.intersect(raycaster);
     if (btn) { wrist.press(btn); xr.pulse("right", 0.4, 40); return; }
-    doPick(raycaster);
+    doPick(raycaster, 1.2);
   };
-  hands.onPinchSelect = (origin, dir) => {
-    pickRay.ray.origin.copy(origin);
-    pickRay.ray.direction.copy(dir);
-    doPick(pickRay);
+  // Hand pinch: panel buttons first, then world selection with wider magnetism.
+  hands.onPinchRay = (raycaster) => {
+    const btn = wrist.intersect(raycaster);
+    if (btn) { wrist.press(btn); return; }
+    doPick(raycaster, 1.6);
+  };
+  // Hand aim each frame: panel hover, else cursor at magnetic pick candidate.
+  const aimProxy = new THREE.Object3D();
+  hands.onAimRay = (raycaster) => {
+    const btn = wrist.intersect(raycaster);
+    wrist.setHover(btn);
+    if (btn !== null) return wrist.mesh;
+    const s = selection.pickFromRay(raycaster, 1.6);
+    if (s) {
+      aimProxy.position.copy(selection.getWorldPosition(s, new THREE.Vector3()));
+      return aimProxy;
+    }
+    return null;
+  };
+
+  // Arrival orientation: end every jump facing the destination.
+  const _hq = new THREE.Quaternion();
+  nav.onOrient = (dir, alpha) => {
+    if (app.mode === "desktop") {
+      desktop.orientToward(dir, alpha);
+    } else {
+      // XR: yaw the rig so the headset's forward ends up centered on the target.
+      const headFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(app.camera.getWorldQuaternion(_hq));
+      const curYaw = Math.atan2(-headFwd.x, -headFwd.z);
+      const wantYaw = Math.atan2(-dir.x, -dir.z);
+      const dYaw = Math.atan2(Math.sin(wantYaw - curYaw), Math.cos(wantYaw - curYaw));
+      app.rig.rotateY(dYaw * alpha);
+    }
   };
 
   // ---------- audio hooks ----------
@@ -181,7 +218,8 @@ async function boot() {
   wrist.onHover = () => xr.pulse("right", 0.15, 15);
 
   // ---------- destinations list ----------
-  buildDestinations(hud, selection, { solar, dso, compact, exoplanets, missions, cinematic });
+  const allDest = buildDestinations(hud, selection, { solar, dso, compact, exoplanets, missions, cinematic });
+  wrist.setDestinations(allDest.map((d) => ({ name: d.name, sel: d.sel })));
 
   // ---------- layer visibility wiring ----------
   const applyLayers = () => {
@@ -191,6 +229,8 @@ async function boot() {
     missions.group.visible = settings.get("layerMissions");
     compact.group.visible = settings.get("layerCompact");
     cinematic.group.visible = settings.get("layerCinematic");
+    // Skybox: toggleable everywhere; hidden by default in passthrough AR (no "bubble").
+    milkyWay.sky.visible = settings.get("layerSkybox") && app.mode !== "ar";
     labels.setVisible(settings.get("labels"));
   };
   settings.onChange(() => applyLayers());
@@ -205,10 +245,17 @@ async function boot() {
         ? speedNorm * 0.85
         : 0;
       app.vignetteStrength += (want - app.vignetteStrength) * Math.min(1, dt * 5);
-      // Warp effect follows jump state.
-      warp.intensity = nav.warpIntensity;
-      // Audio engine follows thrust.
-      audio.updateEngine(nav.speedUnits, nav.thrustInput.lengthSq() > 0 || nav.braking);
+      // Subtle FOV kick tied to REAL jump velocity (desktop only; FOV changes are
+      // uncomfortable and unsupported in XR).
+      const peak = nav.jumpPeakSpeed;
+      const norm = peak > 0 ? THREE.MathUtils.clamp(nav.speedUnits / peak, 0, 1) : 0;
+      const targetFov = 70 * (app.mode === "desktop" ? 1 + 0.14 * norm : 1);
+      if (Math.abs(app.camera.fov - targetFov) > 0.05) {
+        app.camera.fov += (targetFov - app.camera.fov) * Math.min(1, dt * 4);
+        app.camera.updateProjectionMatrix();
+      }
+      // Audio engine follows real velocity (hum rises as stars genuinely stream past).
+      audio.updateEngine(nav.speedUnits, nav.thrustInput.lengthSq() > 0 || nav.braking || nav.jumpState === "warping");
       hud.update(dt);
     },
   });
@@ -230,17 +277,16 @@ async function boot() {
         $("hud-hint").textContent = "XR session failed to start — staying in desktop mode";
       } else {
         wrist.attach(xr.grips[0] ?? app.rig);
-        hud.setHint(mode === "vr" ? "VR: sticks to move/turn · trigger thrust · A select · B jump" : "AR: universe in your room · A select · B jump");
+        hud.setHint(mode === "vr" ? "VR: sticks to move/turn · trigger thrust · A select · B jump · hold Y home" : "AR: universe in your room · skybox off (toggle in LAYERS)");
       }
     } else {
-      hud.setHint("Click to capture mouse · WASD fly · Shift thrust · Space brake · J jump · H help");
+      hud.setHint("Click to capture mouse · WASD fly · Shift thrust · Space brake · J jump · ⌂ home · H help");
     }
-    if (mode === "desktop") {
-      hud.setHint("Click to capture mouse · WASD fly · Shift thrust · Space brake · J jump · H help");
-    }
+    applyLayers(); // skybox visibility depends on mode (off in AR)
   };
   app.onSessionEnd = () => {
     hud.setHint("Session ended — desktop mode. Click to capture mouse.");
+    applyLayers();
   };
 
   // Optional deep link: ?mode=desktop|vr|ar skips the landing screen.
@@ -251,7 +297,10 @@ async function boot() {
   }
 
   // Start just outside Earth's orbit, looking back toward the Sun (−z).
-  app.rig.position.set(0, 0.018, 0.085);
+  app.rig.position.copy(HOME_POS);
+
+  // Test/debug hooks (used by scripts/smoke-test.mjs).
+  (window as unknown as { __cosmos: object }).__cosmos = { app, nav, selection, settings, THREE };
 
   // Hide loading overlay, start loop.
   const overlay = $("loading-overlay");
@@ -268,16 +317,15 @@ function buildDestinations(
     solar: SolarSystem; dso: DSOLayer; compact: CompactLayer;
     exoplanets: ExoplanetLayer; missions: MissionsLayer; cinematic: CinematicLayer;
   },
-) {
+): { name: string; cat: string; sel: Selectable; distPC?: number }[] {
+  const all: { name: string; cat: string; sel: Selectable; distPC?: number }[] = [];
   const solarSels = layers.solar.toSelectables();
-  hud.addDestinations(
-    solarSels.map((s) => ({ name: s.name, cat: "SOLAR SYSTEM", sel: s, distPC: undefined })),
-  );
+  all.push(...solarSels.map((s) => ({ name: s.name, cat: "SOLAR SYSTEM", sel: s, distPC: undefined })));
   // Famous DSOs.
   const famous = ["M31", "M42", "M45", "M13", "M104", "M51", "M8", "M57", "M1", "M33", "M101", "M16"];
   const dsoSels = layers.dso.toSelectables();
-  hud.addDestinations(
-    famous
+  all.push(
+    ...famous
       .map((f) => dsoSels.find((s) => s.id && layers.dso.objects[parseInt(s.id.slice(4))]?.n === f))
       .filter((s): s is Selectable => !!s)
       .map((s) => {
@@ -287,16 +335,14 @@ function buildDestinations(
   );
   // Compact objects.
   const compSels = layers.compact.toSelectables();
-  hud.addDestinations(
-    compSels.map((s, i) => ({
-      name: s.name, cat: "EXOTIC", sel: s, distPC: layers.compact.objects[i]?.d_pc,
-    })),
-  );
+  all.push(...compSels.map((s, i) => ({
+    name: s.name, cat: "EXOTIC", sel: s, distPC: layers.compact.objects[i]?.d_pc,
+  })));
   // Notable exoplanet systems.
   const notable = ["TRAPPIST-1 e", "Proxima Centauri b", "Kepler-452 b", "51 Pegasi b", "HD 209458 b", "Kepler-186 f"];
   const exoSels = layers.exoplanets.toSelectables();
-  hud.addDestinations(
-    notable
+  all.push(
+    ...notable
       .map((n) => ({ s: exoSels.find((x) => x.name === n), n }))
       .filter((x): x is { s: Selectable; n: string } => !!x.s)
       .map(({ s }) => {
@@ -306,15 +352,17 @@ function buildDestinations(
   );
   // Missions.
   const missionSels = layers.missions.toSelectables();
-  hud.addDestinations(
-    missionSels
+  all.push(
+    ...missionSels
       .filter((s) => ["Voyager 1", "Voyager 2", "JWST", "ISS", "New Horizons", "Perseverance"].includes(s.name))
       .map((s) => ({ name: s.name, cat: "MISSIONS", sel: s })),
   );
   // Cinematic (flagged as fiction).
-  hud.addDestinations(
-    layers.cinematic.toSelectables().slice(0, 6).map((s) => ({ name: s.name, cat: "✦ CINEMATIC (FICTION)", sel: s })),
+  all.push(
+    ...layers.cinematic.toSelectables().slice(0, 6).map((s) => ({ name: s.name, cat: "✦ CINEMATIC (FICTION)", sel: s })),
   );
+  hud.addDestinations(all);
+  return all;
 }
 
 boot().catch((e) => {
