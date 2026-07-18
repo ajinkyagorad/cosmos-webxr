@@ -2,11 +2,23 @@
 //   left stick: fly · right stick X: yaw about your head · right stick Y: log-scale zoom
 //   grip (squeeze): 1:1 grab · both grips: pinch-scale + yaw · trigger: select
 //   A: select · B: jump to selected · X tap/hold: labels/back · Y tap/hold: orbits/home
+// Visuals: REAL controller models via XRControllerModelFactory (Quest Touch profiles
+// from the WebXR input-profiles CDN; minimal-ring fallback if the profile can't load —
+// never capsule stand-ins). Exactly ONE thin beam per connected controller, collinear
+// with the selection ray, plus a cursor dot at the actual hit point.
 import * as THREE from "three";
+import { XRControllerModelFactory } from "three/addons/webxr/XRControllerModelFactory.js";
 import type { Updatable, App } from "../core/App";
 import type { Navigation } from "./Navigation";
 import type { Selection } from "../scene/Selection";
 import { settings } from "../ui/Settings";
+
+/** Result returned by the hover callback: where the beam should end (panel button,
+ *  selectable object, or null = free space). */
+export interface HoverHit { point: THREE.Vector3; }
+
+const BEAM_COLOR = 0x9fd0ff;
+const BEAM_REACH = 4; // metres when pointing into free space
 
 export class XRControls implements Updatable {
   private app: App;
@@ -19,6 +31,12 @@ export class XRControls implements Updatable {
   /** Ray used for XR selection. */
   readonly raycaster = new THREE.Raycaster();
   onSelectRay: ((raycaster: THREE.Raycaster) => void) | null = null;
+  /** Fired each frame per connected controller: returns the beam's hit point (or null). */
+  onHoverRay: ((raycaster: THREE.Raycaster, hand: "left" | "right") => HoverHit | null) | null = null;
+
+  private beams: THREE.Line[] = [];
+  private cursor: THREE.Mesh;
+  private modelFallbackTimer = 0;
 
   /** Haptic pulse on one hand (no-op outside a session). */
   pulse(hand: "left" | "right", intensity: number, ms: number) {
@@ -36,6 +54,8 @@ export class XRControls implements Updatable {
     this.app = app;
     this.nav = nav;
     this.selection = selection;
+    const modelFactory = new XRControllerModelFactory();
+
     for (let i = 0; i < 2; i++) {
       const c = this.app.renderer.xr.getController(i);
       const g = this.app.renderer.xr.getControllerGrip(i);
@@ -45,7 +65,18 @@ export class XRControls implements Updatable {
       (c as unknown as THREE.Group).addEventListener("connected" as never, (e: unknown) => {
         (c as unknown as THREE.Group).userData.hand =
           (e as { data?: { handedness?: string } }).data?.handedness ?? (i === 1 ? "right" : "left");
+        (c as unknown as THREE.Group).userData.connected = true;
       });
+      (c as unknown as THREE.Group).addEventListener("disconnected" as never, () => {
+        (c as unknown as THREE.Group).userData.connected = false;
+      });
+      // Real Quest controller model (loads the correct profile from the WebXR
+      // input-profiles CDN on 'connected'; stays empty if the fetch fails → ring fallback).
+      try {
+        (g as unknown as THREE.Group).add(modelFactory.createControllerModel(g as never) as unknown as THREE.Object3D);
+      } catch {
+        this.addRingFallback(g as unknown as THREE.Group);
+      }
       // Grip squeeze = grab the universe (event-driven, like the reference).
       const idx = i as 0 | 1;
       (g as unknown as THREE.Group).addEventListener("squeezestart" as never, () => {
@@ -54,33 +85,47 @@ export class XRControls implements Updatable {
       (g as unknown as THREE.Group).addEventListener("squeezeend" as never, () => {
         this.nav.endGrab(idx);
       });
-      // Simple visible laser pointer on each controller.
-      const laserGeo = new THREE.CylinderGeometry(0.0012, 0.0012, 0.35, 6);
-      laserGeo.translate(0, 0, -0.175);
-      laserGeo.rotateX(-Math.PI / 2);
-      const laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0x7db4ff, transparent: true, opacity: 0.5 }));
-      (c as unknown as THREE.Group).add(laser);
-      // Simple controller body so the user sees their controllers.
-      const body = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.016, 0.07, 4, 10),
-        new THREE.MeshStandardMaterial({ color: 0x2a3550, roughness: 0.6, metalness: 0.3 }),
-      );
-      body.rotation.x = Math.PI / 2.6;
-      (c as unknown as THREE.Group).add(body);
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(0.02, 0.003, 8, 24),
-        new THREE.MeshBasicMaterial({ color: 0x7db4ff, transparent: true, opacity: 0.7 }),
-      );
-      ring.position.set(0, 0.02, -0.02);
-      ring.rotation.x = Math.PI / 3;
-      (c as unknown as THREE.Group).add(ring);
+      // Exactly ONE beam per controller (world-space line, updated every frame).
+      const beamGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
+      const beam = new THREE.Line(beamGeo, new THREE.LineBasicMaterial({
+        color: BEAM_COLOR, transparent: true, opacity: 0.75,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      beam.visible = false;
+      beam.frustumCulled = false;
+      beam.renderOrder = 65;
+      this.app.scene.add(beam);
+      this.beams.push(beam);
     }
+
+    // Cursor dot at the actual hit point (panel or object).
+    this.cursor = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.MeshBasicMaterial({ color: BEAM_COLOR, transparent: true, opacity: 0.9, depthTest: false }),
+    );
+    this.cursor.renderOrder = 70;
+    this.cursor.visible = false;
+    app.scene.add(this.cursor);
+
     // Haptics on grab/pinch.
     nav.onGrabStart = (two) => {
       this.pulse("left", two ? 0.6 : 0.4, 40);
       this.pulse("right", two ? 0.6 : 0.4, 40);
     };
     nav.onGrabEnd = () => { this.pulse("left", 0.25, 25); this.pulse("right", 0.25, 25); };
+  }
+
+  /** Minimal ring fallback if the profile model never loads (never capsules). */
+  private addRingFallback(grip: THREE.Group) {
+    if (grip.userData.ringFallback) return;
+    grip.userData.ringFallback = true;
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.018, 0.003, 8, 24),
+      new THREE.MeshBasicMaterial({ color: 0x7db4ff, transparent: true, opacity: 0.7 }),
+    );
+    ring.position.set(0, 0.02, -0.02);
+    ring.rotation.x = Math.PI / 3;
+    grip.add(ring);
   }
 
   private wasPressed(id: string): boolean {
@@ -108,9 +153,58 @@ export class XRControls implements Updatable {
     }
   }
 
+  /** Update one controller's beam + cursor from its aim ray. Returns hit for hover. */
+  private updateBeam(i: number): void {
+    const c = this.controllers[i];
+    const beam = this.beams[i];
+    const active = this.app.mode !== "desktop" && !!c.userData.connected;
+    if (!active) { beam.visible = false; return; }
+    const m = c.matrixWorld;
+    this.raycaster.ray.origin.setFromMatrixPosition(m);
+    this.raycaster.ray.direction.set(0, 0, -1).transformDirection(new THREE.Matrix4().extractRotation(m));
+    const hand = (c.userData.hand === "left" ? "left" : "right") as "left" | "right";
+    const hit = this.onHoverRay?.(this.raycaster, hand) ?? null;
+    const origin = this.raycaster.ray.origin;
+    const dir = this.raycaster.ray.direction;
+    const len = hit ? origin.distanceTo(hit.point) : BEAM_REACH;
+    const pos = beam.geometry.getAttribute("position") as THREE.BufferAttribute;
+    pos.setXYZ(0, origin.x, origin.y, origin.z);
+    pos.setXYZ(1, origin.x + dir.x * len, origin.y + dir.y * len, origin.z + dir.z * len);
+    pos.needsUpdate = true;
+    beam.visible = true;
+    if (hit && i === 1) { // one shared cursor, right hand wins
+      this.cursor.position.copy(hit.point);
+      this.cursor.scale.setScalar(Math.max(0.006, len * 0.02));
+      this.cursor.visible = true;
+    }
+  }
+
   update(dt: number, _t: number) {
-    if (this.app.mode === "desktop") return;
+    if (this.app.mode === "desktop") {
+      for (const b of this.beams) b.visible = false;
+      this.cursor.visible = false;
+      return;
+    }
     const session = this.app.renderer.xr.getSession?.() as unknown as XRSession | undefined;
+
+    // Beams follow connected controllers (also outside an active session check so
+    // they never linger after session end).
+    let anyBeam = false;
+    for (let i = 0; i < 2; i++) {
+      this.updateBeam(i);
+      anyBeam = anyBeam || this.beams[i].visible;
+    }
+    if (!anyBeam) this.cursor.visible = false;
+
+    // Fallback rings if profile models failed to load (Quest offline etc.).
+    this.modelFallbackTimer += dt;
+    if (this.modelFallbackTimer > 3) {
+      this.modelFallbackTimer = -9999; // check once
+      for (const g of this.grips) {
+        if (g.userData.connected !== false && g.children.length === 0) this.addRingFallback(g);
+      }
+    }
+
     if (!session) return;
 
     const nextButtons: Record<string, boolean> = {};

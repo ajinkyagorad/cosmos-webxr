@@ -17,6 +17,8 @@ import { LabelManager } from "./scene/Labels";
 import { Selection, type Selectable } from "./scene/Selection";
 import { DustVolume, CepheidLayer, GlobularLayer, LocalGroupLayer, ConstellationLayer } from "./scene/AtlasLayers";
 import { StarNameHover } from "./scene/StarNames";
+import { HoverChip } from "./scene/HoverChip";
+import { CoordinateGrid } from "./scene/CoordinateGrid";
 import { Navigation } from "./controls/Navigation";
 import { DesktopControls } from "./controls/DesktopControls";
 import { XRControls } from "./controls/XRControls";
@@ -97,6 +99,10 @@ async function boot() {
     app.universe.add(constellations.lines);
   }
 
+  // ---------- cylindrical coordinate grid (C7; toggle, default OFF) ----------
+  const grid = new CoordinateGrid();
+  app.universe.add(grid.group);
+
   // ---------- labels (world-space, constant angular size, per-label zoom windows) ----------
   const labels = new LabelManager(app);
   app.addUpdatable(labels);
@@ -138,6 +144,28 @@ async function boot() {
     gcAnchor.position.copy(GALACTIC_CENTER_PC);
     app.universe.add(gcAnchor);
     labelQueue.push(labels.add("Milky Way · Galactic Center", gcAnchor, { size: 8, color: "#ffd9a0", minLog: -7, maxLog: -2 }));
+  }
+  // Spiral-arm labels at galactic zoom (C10): majors brighter.
+  for (const arm of milkyWay.armAnchors) {
+    const anchor = new THREE.Object3D();
+    anchor.position.copy(arm.position);
+    app.universe.add(anchor);
+    labelQueue.push(labels.add(arm.name, anchor, {
+      size: arm.major ? 17 : 13,
+      color: arm.major ? "#a8d8ff" : "#7fa8d8",
+      minLog: -5.5, maxLog: -2.2,
+    }));
+  }
+  // Galaxy boost auto-labels (C11): majors of the Local Group always carry names.
+  if (localGroup) {
+    const MAJORS = ["Andromeda (M31)", "Triangulum (M33)", "LMC", "SMC", "M 32", "NGC 205", "IC 10"];
+    for (const g of localGroup.galaxies) {
+      if (!MAJORS.includes(g.name)) continue;
+      const anchor = new THREE.Object3D();
+      anchor.position.set(g.pos[0], g.pos[1], g.pos[2]);
+      app.universe.add(anchor);
+      labelQueue.push(labels.add(g.name, anchor, { size: 25, color: "#d8c9ff", minLog: -7.3, maxLog: -3.0 }));
+    }
   }
   // Landmark labels (local clouds / Milky Way / Local Group), each in its zoom window.
   const LANDMARK_LABEL: Record<string, { size: number; color: string; minLog: number; maxLog: number }> = {
@@ -265,19 +293,76 @@ async function boot() {
     if (btn) { wrist.press(btn); return; }
     doPick(raycaster, 1.6);
   };
+
+  // ---------- hover labels (dwell ~0.4 s → info chip) ----------
+  const hoverChip = new HoverChip(app);
+  app.addUpdatable(hoverChip);
+  const hoverBySrc = new Map<string, Selectable | null>();
+  let hoverSel: Selectable | null = null;
+  let hoverDwell = 0;
+  const setHoverCandidate = (src: string, s: Selectable | null) => { hoverBySrc.set(src, s); };
+  const effHover = (): Selectable | null =>
+    hoverBySrc.get("right") ?? hoverBySrc.get("left") ?? hoverBySrc.get("hand1") ??
+    hoverBySrc.get("hand0") ?? hoverBySrc.get("desktop") ?? null;
+  app.addUpdatable({
+    update(dt: number) {
+      const s = settings.get("hoverLabels") ? effHover() : null;
+      if (s !== hoverSel) { hoverSel = s; hoverDwell = 0; hoverChip.hide(); }
+      else if (s) {
+        hoverDwell += dt;
+        if (hoverDwell >= 0.4) {
+          const wp = selection.getWorldPosition(s, new THREE.Vector3());
+          const dUni = selection.getUniPosition(s, new THREE.Vector3())
+            .distanceTo(nav.universePos(new THREE.Vector3()));
+          hoverChip.show(s.name, formatDistancePC(Math.abs(dUni)), wp);
+        }
+      }
+    },
+  });
+
+  // Controller aim each frame: panel hover first, else world pick; the beam ends at
+  // the hit point (this is also the hover-label source for controllers).
+  xr.onHoverRay = (raycaster, hand) => {
+    const btn = wrist.intersect(raycaster);
+    if (hand === "right") wrist.setHover(btn);
+    if (btn !== null) {
+      setHoverCandidate(hand, null);
+      const hit = raycaster.intersectObject(wrist.mesh, false)[0];
+      return hit ? { point: hit.point } : null;
+    }
+    const s = selection.pickFromRay(raycaster, 1.4);
+    setHoverCandidate(hand, s);
+    if (s) return { point: selection.getWorldPosition(s, new THREE.Vector3()) };
+    return null;
+  };
+
   // Hand aim each frame: panel hover, else cursor at magnetic pick candidate.
   const aimProxy = new THREE.Object3D();
-  hands.onAimRay = (raycaster) => {
+  hands.onAimRay = (raycaster, handIndex) => {
     const btn = wrist.intersect(raycaster);
     wrist.setHover(btn);
-    if (btn !== null) return wrist.mesh;
+    if (btn !== null) { setHoverCandidate(`hand${handIndex}`, null); return wrist.mesh; }
     const s = selection.pickFromRay(raycaster, 1.6);
+    setHoverCandidate(`hand${handIndex}`, s);
     if (s) {
       aimProxy.position.copy(selection.getWorldPosition(s, new THREE.Vector3()));
       return aimProxy;
     }
     return null;
   };
+
+  // Desktop reticle hover (pointer-locked look ray).
+  app.addUpdatable({
+    update() {
+      if (app.mode !== "desktop" || document.pointerLockElement !== app.renderer.domElement) {
+        setHoverCandidate("desktop", null);
+        return;
+      }
+      pickRay.ray.origin.copy(app.camera.getWorldPosition(new THREE.Vector3()));
+      pickRay.ray.direction.copy(app.camera.getWorldDirection(new THREE.Vector3()));
+      setHoverCandidate("desktop", selection.pickFromRay(pickRay, 1));
+    },
+  });
 
   // (Arrival orientation is handled inside Navigation.beginTravel — the universe yaws
   //  so the destination ends up ahead of the user, in every mode.)
@@ -318,9 +403,18 @@ async function boot() {
     // Skybox: toggleable everywhere; hidden by default in passthrough AR (no "bubble").
     milkyWay.sky.visible = settings.get("layerSkybox") && app.mode !== "ar";
     labels.setVisible(settings.get("labels"));
+    // C7 grid / C11 galaxy boost / D16 cinematic accent theme.
+    grid.group.visible = settings.get("layerGrid");
+    if (localGroup) localGroup.setBoost(settings.get("galaxyBoost"));
+    document.body.classList.toggle("cinematic-theme", settings.get("layerCinematic"));
   };
   settings.onChange(() => applyLayers());
   applyLayers();
+
+  // Grid band follows the zoom level every frame (rebuilds only on band change).
+  app.addUpdatable({
+    update() { grid.update(nav.logScale, settings.get("orbitExaggeration")); },
+  });
 
   // ---------- comfort vignette + per-frame misc ----------
   app.addUpdatable({

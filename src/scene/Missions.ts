@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import type { MissionData } from "../data/types";
 import { radecToVec, esc, AU_IN_PC } from "../util/astro";
-import { radialSpriteTexture } from "../util/textures";
+import { probeIconTexture } from "../util/textures";
 import { WORLD_PER_AU, type SolarSystem } from "./SolarSystem";
 import { settings } from "../ui/Settings";
 import { KM_PER_AU, PLANETS } from "../data/solarSystemData";
@@ -16,33 +16,30 @@ export class MissionsLayer {
 
   constructor(solar: SolarSystem, data: MissionData) {
     this.group.name = "missions";
-    const tex = radialSpriteTexture("rgba(180,220,255,1)", "rgba(180,220,255,0)");
+    const tex = probeIconTexture(); // crisp icon — probes are not stars, no glow
     const v = new THREE.Vector3();
 
     for (const m of data.missions) {
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: tex, color: 0xcfe8ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        map: tex, color: 0xd8ecff, transparent: true, depthWrite: false,
       }));
       sprite.name = m.n;
 
       if (m.host === "earth" && m.alt_km) {
-        // Low Earth orbit: parent to Earth mesh (local unit = Earth radius).
-        const earth = solar.getPlanetObject("earth");
-        if (earth) {
-          sprite.position.set(1 + m.alt_km / 6371, 0.15, 0);
-          sprite.scale.setScalar(0.35);
-          earth.add(sprite);
+        // Low Earth orbit: parent to the non-spinning orbit anchor (world units).
+        const orb = solar.getPlanetOrbitAnchor("earth");
+        if (orb) {
+          sprite.position.set((1 + m.alt_km / 6371) * orb.radiusWorld, 0.15 * orb.radiusWorld, 0);
+          sprite.scale.setScalar(0.35 * orb.radiusWorld);
+          orb.anchor.add(sprite);
         }
       } else if (m.host === "l1" || m.host === "l2") {
-        // Sun–Earth L1/L2: parent to Earth, offset along ±sun direction (local units).
-        const earth = solar.getPlanetObject("earth");
-        if (earth) {
-          const distKm = 1.5e6;
-          const local = distKm / 6371 / 6371; // compressed: local unit = earth radius world
-          sprite.position.set(m.host === "l2" ? 3.2 : -3.2, 0.35, 0); // stylized offset from Earth
-          sprite.scale.setScalar(0.4);
-          earth.add(sprite);
-          void local;
+        // Sun–Earth L1/L2: parent to the orbit anchor, offset along ±sun direction.
+        const orb = solar.getPlanetOrbitAnchor("earth");
+        if (orb) {
+          sprite.position.set(m.host === "l2" ? 3.2 * orb.radiusWorld : -3.2 * orb.radiusWorld, 0.35 * orb.radiusWorld, 0); // stylized offset
+          sprite.scale.setScalar(0.4 * orb.radiusWorld);
+          orb.anchor.add(sprite);
         }
       } else if (m.host === "mars" || m.host === "jupiter" || m.host === "saturn") {
         const planet = solar.getPlanetObject(m.host);

@@ -66,6 +66,26 @@ export function radialSpriteTexture(inner = "rgba(255,255,255,1)", outer = "rgba
   return new THREE.CanvasTexture(c);
 }
 
+/** Crisp probe/satellite icon (NOT a glow): hard-edged body + solar-panel bar + ring. */
+export function probeIconTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.clearRect(0, 0, 64, 64);
+  g.strokeStyle = "rgba(210,230,255,0.95)";
+  g.lineWidth = 3;
+  g.beginPath(); g.arc(32, 32, 22, 0, Math.PI * 2); g.stroke(); // targeting ring
+  g.fillStyle = "rgba(230,242,255,1)";
+  g.fillRect(28, 28, 8, 8);      // bus
+  g.fillRect(14, 30, 12, 4);     // left panel
+  g.fillRect(38, 30, 12, 4);     // right panel
+  g.fillRect(30, 14, 4, 10);     // antenna mast
+  g.beginPath(); g.arc(32, 12, 4, 0, Math.PI * 2); g.fill(); // dish
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** Dark-edged vignette texture for motion comfort. */
 export function vignetteTexture(): THREE.Texture {
   const c = document.createElement("canvas");

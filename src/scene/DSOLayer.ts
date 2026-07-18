@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import type { DSO, DSOData } from "../data/types";
 import { radecToVec, formatDistancePC, esc, PC_TO_LY } from "../util/astro";
+import { DSO_DISTANCE_LY, normalizeDSOKey } from "../data/dsoDistances";
 import type { Selectable } from "./Selection";
 
 const TYPE_CODE: Record<string, number> = {
@@ -29,6 +30,8 @@ export class DSOLayer {
   objects: DSO[] = [];
   positions: THREE.Vector3[] = [];
   sizes: number[] = [];
+  /** Resolved distance in light-years per object (catalog or curated table), null = unknown. */
+  distLy: (number | null)[] = [];
 
   constructor(data: DSOData) {
     const objs = data.objects;
@@ -41,7 +44,12 @@ export class DSOLayer {
     const seed = new Float32Array(N);
     const v = new THREE.Vector3();
     objs.forEach((o, i) => {
-      const dpc = o.d ? o.d / PC_TO_LY : 50000; // unknown distance → far-field 50 kpc
+      // Distance: catalog value first, then the curated Messier/NGC table (C12).
+      // The catalog name field is zero-padded ("M031") so the fetch-time join
+      // missed almost everything — normalize before lookup.
+      const dly = o.d ?? DSO_DISTANCE_LY[normalizeDSOKey(o.n)] ?? null;
+      this.distLy.push(dly);
+      const dpc = dly != null ? dly / PC_TO_LY : 50000; // unknown distance → far-field 50 kpc
       radecToVec(o.ra, o.dec, dpc, v);
       this.positions.push(v.clone());
       pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
@@ -49,7 +57,7 @@ export class DSOLayer {
       const dim = o.m !== null ? THREE.MathUtils.clamp(1.3 - o.m / 18, 0.25, 1.15) : 0.6;
       col[i * 3] = c.r * dim; col[i * 3 + 1] = c.g * dim; col[i * 3 + 2] = c.b * dim;
       let sizePc = TYPE_DEFAULT_SIZE_PC[o.t] ?? 4;
-      if (o.d && o.s) {
+      if (dly != null && o.s) {
         // Real angular size at real distance → physical size.
         sizePc = Math.max(2 * dpc * Math.tan(((o.s / 60) * Math.PI) / 360), sizePc * 0.3);
       }
@@ -162,20 +170,22 @@ export class DSOLayer {
         name: o.cn ? `${o.n} (${o.cn})` : o.n,
         kind: "dso",
         position: this.positions[i],
-        radiusWorld: Math.max(this.sizes[i], 0.5),
-        describe: () => describeDSO(o),
+        // sizes are physical diameters → true radius, so go-to framing (C8) is correct
+        radiusWorld: Math.max(this.sizes[i] / 2, 0.25),
+        describe: () => describeDSO(o, this.distLy[i]),
       });
     });
     return out;
   }
 }
 
-export function describeDSO(o: DSO): string {
+export function describeDSO(o: DSO, distLy?: number | null): string {
   const rows = [`<b>${esc(o.n)}</b>${o.cn ? ` — ${esc(o.cn)}` : ""}`, `Type: ${esc(o.t)}`];
-  if (o.d) rows.push(`Distance: ${formatDistancePC(o.d / PC_TO_LY)}`);
+  const d = distLy ?? o.d;
+  if (d) rows.push(`Distance: ${formatDistancePC(d / PC_TO_LY)}`);
   if (o.m !== null) rows.push(`Visual magnitude: ${o.m.toFixed(1)}`);
   if (o.s) rows.push(`Angular size: ${o.s.toFixed(1)}′`);
   rows.push(`RA ${o.ra.toFixed(2)}° · Dec ${o.dec.toFixed(2)}° (J2000)`);
-  rows.push(`<span class="dim">OpenNGC / Messier catalog</span>`);
+  rows.push(`<span class="dim">OpenNGC / Messier catalog · distances SEDS/SIMBAD</span>`);
   return rows.join("<br>");
 }

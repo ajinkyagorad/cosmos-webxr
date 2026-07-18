@@ -19,7 +19,16 @@ export interface SettingsState {
   layerGlobulars: boolean;
   layerGalaxies: boolean;
   layerConstellations: boolean;
+  layerCMB: boolean;
+  layerDarkHalo: boolean;
+  layerGrid: boolean;
+  layer2MRS: boolean;
+  galaxyBoost: boolean;
+  hoverLabels: boolean;
+  trails: boolean;
   starNames: boolean;
+  /** Simulation clock rate index into TIME_RATES (0 = real time 1 s/s). */
+  timeWarp: number;
   // solar system
   labels: boolean;
   orbits: boolean;
@@ -50,7 +59,15 @@ const DEFAULTS: SettingsState = {
   layerGlobulars: true,
   layerGalaxies: true,
   layerConstellations: false,
+  layerCMB: true,
+  layerDarkHalo: true,
+  layerGrid: false,
+  layer2MRS: true,
+  galaxyBoost: true,
+  hoverLabels: true,
+  trails: true,
   starNames: true,
+  timeWarp: 0,
   labels: true,
   orbits: true,
   planetSizeExaggeration: 800,
@@ -63,6 +80,10 @@ const DEFAULTS: SettingsState = {
 };
 
 type Listener = (key: keyof SettingsState, value: number | boolean) => void;
+
+/** Simulation clock rates selectable via the "Time warp" setting (index 0 = real time). */
+export const TIME_RATES = [1, 60, 600, 3600, 86400];
+export const TIME_RATE_LABELS = ["1× real time", "60× (1 min/s)", "600× (10 min/s)", "3600× (1 h/s)", "86400× (1 day/s)"];
 
 const KEY = "cosmos-webxr-settings-v1";
 

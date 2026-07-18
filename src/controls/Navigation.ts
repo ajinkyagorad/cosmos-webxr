@@ -385,16 +385,23 @@ export class Navigation implements Updatable {
     }
   }
 
-  /** Build a destination for any selectable: museum objects at HOME_LOG, everything
-   *  else arrives ~0.5 m from the user with the neighbourhood visible. */
+  /** Build a destination for any selectable: museum objects at HOME_LOG; extended
+   *  objects arrive subtending ~30° apparent diameter at the 0.95 m anchor (using
+   *  their REAL radius); point-like objects (stars/exoplanets) get a fixed sensible
+   *  neighbourhood scale (1 pc = 1 m). Same feel for every destination. */
   private destFromSelectable(s: Selectable): Destination {
     const p = this.selectableUniPos(s, new THREE.Vector3());
     const museum = s.solid || s.kind === "planet" || s.kind === "moon" || s.kind === "mission";
     if (museum) return { p, log: HOME_LOG, label: s.name, sel: s };
-    const here = this.universePos(_v2);
-    const d = Math.max(p.distanceTo(here), 1e-6);
-    const log = THREE.MathUtils.clamp(-Math.log10(d) - 0.3, LOG_MIN, LOG_MAX);
-    return { p, log, label: s.name, sel: s };
+    const extended = s.kind === "dso" || s.kind === "galaxy" || s.kind === "landmark" || s.kind === "compact";
+    if (extended && s.radiusWorld > 0) {
+      // Object's real diameter (pc) → world 0.95 m ahead, spanning ~30°:
+      // worldDiam = 2·0.95·tan(15°) ≈ 0.51 m; scale = worldDiam / (2·radiusPc).
+      const worldDiam = 2 * 0.95 * Math.tan(THREE.MathUtils.degToRad(15));
+      const log = THREE.MathUtils.clamp(Math.log10(worldDiam / (2 * s.radiusWorld)), LOG_MIN, LOG_MAX);
+      return { p, log, label: s.name, sel: s };
+    }
+    return { p, log: THREE.MathUtils.clamp(0, LOG_MIN, LOG_MAX), label: s.name, sel: s };
   }
 
   private selectableUniPos(s: Selectable, out: THREE.Vector3): THREE.Vector3 {

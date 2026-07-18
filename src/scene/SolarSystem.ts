@@ -1,30 +1,47 @@
-// Solar system: textured planets with real axial tilts, orbit lines, Saturn's ring,
-// Earth day/night shader, moon, bump with elevation exaggeration, and scale management.
-// Real constants come from src/data/solarSystemData.ts (NASA fact sheets).
+// Solar system: textured planets at TRUE real-time positions (JPL Keplerian elements +
+// Kepler solver, see src/data/ephemeris.ts), real axial tilts in the equatorial J2000
+// frame (ecliptic tilted 23.44° to the celestial equator), elliptical inclined orbit
+// lines, Saturn's ring, Earth day/night shader, and a real-direction Moon
+// (Schlyter lunar theory; orbit distance compressed for readability — noted in README).
+// The simulation clock defaults to REAL TIME (1 s = 1 s); the Time warp setting scales it.
 import * as THREE from "three";
 import type { Updatable, App } from "../core/App";
 import { PLANETS, SUN, KM_PER_AU, type PlanetDef } from "../data/solarSystemData";
+import {
+  planetEclipticAU, planetOrbitEclipticAU, moonEclipticEarthRadii, planetNodeAxisEcliptic,
+  centuriesSinceJ2000, ECLIPTIC_TO_EQUATORIAL_Q,
+} from "../data/ephemeris";
 import { loadTextureWithFallback, proceduralPlanetTexture } from "../util/textures";
-import { settings } from "../ui/Settings";
+import { settings, TIME_RATES } from "../ui/Settings";
 import { esc } from "../util/astro";
 import type { Selectable } from "./Selection";
 
-/** Base world scale for the solar system: 1 AU = 0.02 world units (1 world unit = 1 pc
- *  in the galactic frame, so this is already an inherent scale separation — by design). */
+/** Base world scale for the solar system: 1 AU = 0.02 universe-local units (pc).
+ *  Scale-chain audit (A2): stars sit at catalog pc; the Sun sits at the origin;
+ *  1 pc = 206,264.8 AU, so Proxima Centauri at 1.302 pc = 268,553 AU lands exactly
+ *  on its catalog position. Planet radii use the same pc unit with a user
+ *  exaggeration factor (default 800×) so they stay visible next to AU-scale orbits;
+ *  the Sun uses a smaller factor (15×) or it would swallow Mercury's orbit — the
+ *  exaggeration is display-only, positions are always real. */
 export const WORLD_PER_AU = 0.02;
-const SUN_SIZE_EXAGG = 15; // Sun radius exaggeration (separate, else it swallows Mercury)
-const SIM_HOURS_PER_SEC = 36; // animation clock: 1 real second = 1.5 days
+const SUN_SIZE_EXAGG = 15;
+
+const _ecl = new THREE.Vector3();
+const _pole = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
 interface PlanetNode {
   def: PlanetDef;
-  pivot: THREE.Group;      // orbits the sun
-  mesh: THREE.Mesh;        // spins
-  tiltGroup: THREE.Group;
+  root: THREE.Group;       // positioned by the ephemeris each frame
+  mesh: THREE.Mesh;        // spins about its own pole (+Y)
+  tiltGroup: THREE.Group;  // orients +Y to the planet's true pole direction
   orbitLine: THREE.LineLoop;
   radiusWorld: number;
-  orbitWorld: number;
   labelAnchor: THREE.Object3D;
-  spinSign: number;
+  spinRate: number;        // rad per SIMULATED second (signed)
+  nodeAxisEcl: THREE.Vector3; // tilt axis: direction of the orbit's ascending node (ecliptic)
 }
 
 export class SolarSystem implements Updatable {
@@ -33,7 +50,10 @@ export class SolarSystem implements Updatable {
   private planets: PlanetNode[] = [];
   private sun!: THREE.Mesh;
   private earthShader?: THREE.ShaderMaterial;
-  private moonNodes: { mesh: THREE.Mesh; pivot: THREE.Group; def: PlanetDef; radiusKm: number }[] = [];
+  private moonNodes: { mesh: THREE.Mesh; parent: PlanetNode; radiusKm: number }[] = [];
+  /** Simulation clock (ms since epoch). Starts at the real current date/time. */
+  private simMs = Date.now();
+  private orbitsBuiltMs = -Infinity;
 
   constructor(app: App) {
     this.app = app;
@@ -46,7 +66,12 @@ export class SolarSystem implements Updatable {
         this.applySettings();
       }
     });
+    this.update(0, 0); // place everything for the real current date before first frame
   }
+
+  /** The simulated date (real time by default). */
+  get simDate(): Date { return new Date(this.simMs); }
+  get timeRate(): number { return TIME_RATES[Math.round(THREE.MathUtils.clamp(settings.get("timeWarp"), 0, TIME_RATES.length - 1))]; }
 
   private texDir = "/textures/planets/";
 
@@ -70,21 +95,12 @@ export class SolarSystem implements Updatable {
     return (def.radiusKm / KM_PER_AU) * WORLD_PER_AU * settings.get("planetSizeExaggeration");
   }
 
-  private orbitWorld(def: PlanetDef): number {
-    return def.semiMajorAU * WORLD_PER_AU * settings.get("orbitExaggeration");
-  }
-
   private buildPlanet(def: PlanetDef) {
-    const pivot = new THREE.Group();
-    pivot.rotation.y = Math.random() * Math.PI * 2; // arbitrary epoch phase
-    this.group.add(pivot);
-
-    const orbitGroup = new THREE.Group();
-    pivot.add(orbitGroup);
+    const root = new THREE.Group();
+    this.group.add(root);
 
     const tiltGroup = new THREE.Group();
-    tiltGroup.rotation.z = THREE.MathUtils.degToRad(def.tiltDeg); // real axial tilt
-    orbitGroup.add(tiltGroup);
+    root.add(tiltGroup);
 
     const tex = loadTextureWithFallback(this.texDir + def.texture, () => proceduralPlanetTexture(def.fallbackHue));
     let mesh: THREE.Mesh;
@@ -107,7 +123,6 @@ export class SolarSystem implements Updatable {
       const inner = def.ring.innerKm / def.radiusKm;
       const outer = def.ring.outerKm / def.radiusKm;
       const ringGeo = new THREE.RingGeometry(inner, outer, 96, 1);
-      // Remap UVs radially so the strip texture wraps correctly.
       const uv = ringGeo.getAttribute("uv") as THREE.BufferAttribute;
       const posA = ringGeo.getAttribute("position") as THREE.BufferAttribute;
       for (let i = 0; i < uv.count; i++) {
@@ -123,45 +138,40 @@ export class SolarSystem implements Updatable {
       mesh.add(ring); // inherits planet radius scale
     }
 
-    // Moon(s)
+    const node: PlanetNode = {
+      def, root, mesh, tiltGroup,
+      orbitLine: null as unknown as THREE.LineLoop,
+      radiusWorld: 0,
+      labelAnchor: new THREE.Object3D(),
+      spinRate: (Math.PI * 2) / (def.rotationHours * 3600) * (def.rotationHours < 0 ? -1 : 1),
+      nodeAxisEcl: new THREE.Vector3(),
+    };
+    tiltGroup.add(node.labelAnchor); // not the spinning mesh — labels must not whirl
+
+    // Orbit line (rebuilt from the real elements as the date changes).
+    node.orbitLine = new THREE.LineLoop(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0x4a6a9a, transparent: true, opacity: 0.45 }),
+    );
+    node.orbitLine.frustumCulled = false;
+    this.group.add(node.orbitLine);
+
+    // Moon(s): real direction from the parent planet (Schlyter theory), orbit
+    // distance compressed only for readability (never inside the planet mesh).
     if (def.moons) {
       for (const m of def.moons) {
-        const moonPivot = new THREE.Group();
-        mesh.add(moonPivot); // orbits with planet spin frame (simplified)
         const moonTex = loadTextureWithFallback(this.texDir + m.texture, () => proceduralPlanetTexture(0.1));
         const moonMat = new THREE.MeshStandardMaterial({ map: moonTex, roughness: 1, metalness: 0 });
         moonMat.bumpMap = moonTex;
         (moonMat.bumpMap as THREE.Texture).colorSpace = THREE.NoColorSpace;
         const moonMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), moonMat);
         moonMesh.name = m.name;
-        moonPivot.add(moonMesh);
-        this.moonNodes.push({ mesh: moonMesh, pivot: moonPivot, def, radiusKm: m.radiusKm });
+        root.add(moonMesh);
+        this.moonNodes.push({ mesh: moonMesh, parent: node, radiusKm: m.radiusKm });
       }
     }
 
-    // Orbit line
-    const seg = 128;
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i < seg; i++) {
-      const a = (i / seg) * Math.PI * 2;
-      pts.push(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)));
-    }
-    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
-    const orbitLine = new THREE.LineLoop(
-      lineGeo,
-      new THREE.LineBasicMaterial({ color: 0x4a6a9a, transparent: true, opacity: 0.45 }),
-    );
-    this.group.add(orbitLine);
-
-    const labelAnchor = new THREE.Object3D();
-    labelAnchor.position.set(0, 1.3, 0);
-    mesh.add(labelAnchor);
-
-    this.planets.push({
-      def, pivot, mesh, tiltGroup, orbitLine, labelAnchor,
-      radiusWorld: 0, orbitWorld: 0,
-      spinSign: def.rotationHours < 0 ? -1 : 1,
-    });
+    this.planets.push(node);
   }
 
   /** Earth: custom day/night mixing shader (night lights appear on the dark side). */
@@ -194,7 +204,6 @@ export class SolarSystem implements Updatable {
           float ndl = dot(normalize(vNormalW), normalize(uSunDir));
           float dayMix = smoothstep(-0.08, 0.28, ndl);
           vec3 col = day * max(ndl, 0.06) * 1.15 * dayMix + night * 1.6 * (1.0 - dayMix);
-          // Simple limb darkening/atmosphere rim.
           float rim = pow(1.0 - abs(ndl), 3.0) * 0.15;
           col += vec3(0.3, 0.5, 1.0) * rim * dayMix;
           gl_FragColor = vec4(col, 1.0);
@@ -213,31 +222,46 @@ export class SolarSystem implements Updatable {
     this.sun.scale.setScalar(this.sunRadiusWorld());
     for (const p of this.planets) {
       p.radiusWorld = this.planetRadiusWorld(p.def);
-      p.orbitWorld = this.orbitWorld(p.def);
       p.mesh.scale.setScalar(p.radiusWorld);
-      p.mesh.position.set(0, 0, 0);
-      p.tiltGroup.position.set(p.orbitWorld, 0, 0);
-      p.orbitLine.scale.setScalar(p.orbitWorld);
       p.orbitLine.visible = showOrbits;
       const mat = p.mesh.material as THREE.MeshStandardMaterial;
       if (mat && "bumpScale" in mat && mat.bumpMap) {
         mat.bumpScale = elev * p.radiusWorld * 0.03;
       }
-      p.labelAnchor.position.set(0, 1.6, 0);
+      p.labelAnchor.position.set(0, 1.6 * p.radiusWorld, 0);
     }
     for (const m of this.moonNodes) {
-      // Moon lives in planet-mesh local space (1 local unit = planet radius).
-      // Orbit radius: 12 parent radii (compressed from real ~60 for readability).
-      m.mesh.position.set(12, 0, 0);
-      m.mesh.scale.setScalar(m.radiusKm / m.def.radiusKm); // real radius ratio
+      m.mesh.scale.setScalar((m.radiusKm / KM_PER_AU) * WORLD_PER_AU * sizeEx);
       const mm = m.mesh.material as THREE.MeshStandardMaterial;
       mm.bumpScale = elev * 0.05;
     }
+    this.orbitsBuiltMs = -Infinity; // force orbit-line rebuild at the new scale
+  }
+
+  /** Rebuild one planet's orbit line from the real elements (ecliptic → equatorial). */
+  private rebuildOrbit(p: PlanetNode, T: number) {
+    const ex = settings.get("orbitExaggeration");
+    const pts = planetOrbitEclipticAU(p.def.name, T, 240);
+    const arr = new Float32Array(pts.length * 3);
+    pts.forEach((pt, i) => {
+      pt.multiplyScalar(WORLD_PER_AU * ex).applyQuaternion(ECLIPTIC_TO_EQUATORIAL_Q);
+      arr[i * 3] = pt.x; arr[i * 3 + 1] = pt.y; arr[i * 3 + 2] = pt.z;
+    });
+    p.orbitLine.geometry.dispose();
+    p.orbitLine.geometry = new THREE.BufferGeometry();
+    p.orbitLine.geometry.setAttribute("position", new THREE.BufferAttribute(arr, 3));
   }
 
   getPlanetObject(name: string): THREE.Object3D | undefined {
     if (name === "sun") return this.sun;
     return this.planets.find((p) => p.def.name.toLowerCase() === name.toLowerCase())?.mesh;
+  }
+
+  /** Non-spinning anchor for orbiters (tilt group: oriented, but does not rotate with
+   *  the planet's sidereal spin), plus the planet's current world radius. */
+  getPlanetOrbitAnchor(name: string): { anchor: THREE.Object3D; radiusWorld: number } | undefined {
+    const p = this.planets.find((x) => x.def.name.toLowerCase() === name.toLowerCase());
+    return p ? { anchor: p.tiltGroup, radiusWorld: p.radiusWorld } : undefined;
   }
 
   getLabelAnchors(): { name: string; object: THREE.Object3D }[] {
@@ -260,26 +284,57 @@ export class SolarSystem implements Updatable {
           `<b>${esc(p.def.name)}</b><br>Radius: ${p.def.radiusKm.toLocaleString()} km<br>` +
           `Semi-major axis: ${p.def.semiMajorAU} AU<br>Axial tilt: ${p.def.tiltDeg}°<br>` +
           `Rotation period: ${p.def.rotationHours} h<br>Orbital period: ${p.def.orbitDays.toLocaleString()} d<br>` +
-          `<span class="dim">NASA Planetary Fact Sheet</span>`,
+          `<span class="dim">NASA Planetary Fact Sheet · live JPL Keplerian position</span>`,
       });
     }
     for (const m of this.moonNodes) {
       items.push({
         id: `moon-${m.mesh.name}`, name: m.mesh.name, kind: "moon", object: m.mesh,
         radiusWorld: m.mesh.getWorldScale(new THREE.Vector3()).x, solid: true,
-        describe: () => `<b>${esc(m.mesh.name)}</b><br>Radius: ${m.radiusKm.toLocaleString()} km<br>Semi-major axis: 384,400 km<br><span class="dim">NASA fact sheet</span>`,
+        describe: () => `<b>${esc(m.mesh.name)}</b><br>Radius: ${m.radiusKm.toLocaleString()} km<br>Semi-major axis: 384,400 km<br><span class="dim">NASA fact sheet · live position (Schlyter)</span>`,
       });
     }
     return items;
   }
 
   update(dt: number, _t: number) {
-    // Orbits: rate from real orbital periods at SIM_HOURS_PER_SEC.
+    // Simulation clock: real time by default; Time warp setting scales it.
+    this.simMs += dt * 1000 * this.timeRate;
+    const T = centuriesSinceJ2000(this.simMs);
+    const ex = settings.get("orbitExaggeration");
+
     for (const p of this.planets) {
-      p.pivot.rotation.y += ((Math.PI * 2) / (p.def.orbitDays * 24)) * SIM_HOURS_PER_SEC * dt;
-      p.mesh.rotation.y += p.spinSign * 0.25 * dt; // gentle visual spin (not to scale)
+      // True heliocentric position: ecliptic J2000 (AU) → equatorial pc (museum scale).
+      planetEclipticAU(p.def.name, T, _ecl);
+      _ecl.multiplyScalar(WORLD_PER_AU * ex).applyQuaternion(ECLIPTIC_TO_EQUATORIAL_Q);
+      p.root.position.copy(_ecl);
+
+      // True pole orientation: ecliptic north tilted by tiltDeg about the orbit's
+      // ascending-node axis, then ecliptic→equatorial. (Approximation noted in README.)
+      planetNodeAxisEcliptic(p.def.name, T, p.nodeAxisEcl);
+      _pole.copy(Z_AXIS).applyAxisAngle(p.nodeAxisEcl, THREE.MathUtils.degToRad(p.def.tiltDeg));
+      _pole.applyQuaternion(ECLIPTIC_TO_EQUATORIAL_Q).normalize();
+      p.tiltGroup.quaternion.setFromUnitVectors(Y_AXIS, _pole);
+      // Sidereal spin about the pole, at the simulated rate.
+      p.mesh.rotation.y += p.spinRate * dt * this.timeRate;
     }
-    for (const m of this.moonNodes) m.pivot.rotation.y += dt * 0.3;
+
+    // Moon: real geocentric direction (ecliptic → equatorial); distance compressed
+    // to ≥ 6 parent radii so it never hides inside the exaggerated planet mesh.
+    moonEclipticEarthRadii(this.simMs, _dir);
+    _dir.applyQuaternion(ECLIPTIC_TO_EQUATORIAL_Q).normalize();
+    for (const m of this.moonNodes) {
+      const realDist = (384400 / KM_PER_AU) * WORLD_PER_AU * ex;
+      const dist = Math.max(realDist, 6 * m.parent.radiusWorld);
+      m.mesh.position.copy(m.parent.root.position).addScaledVector(_dir, dist);
+    }
+
+    // Orbit lines follow the slowly-changing elements (rebuild at most every 20 sim-days).
+    if (this.simMs - this.orbitsBuiltMs > 20 * 86400000) {
+      this.orbitsBuiltMs = this.simMs;
+      for (const p of this.planets) this.rebuildOrbit(p, T);
+    }
+
     this.sun.rotation.y += dt * 0.05;
     // Earth shader sun direction.
     if (this.earthShader) {

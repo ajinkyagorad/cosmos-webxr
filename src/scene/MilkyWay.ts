@@ -21,6 +21,8 @@ export class MilkyWay implements Updatable {
   sky!: THREE.Mesh;
   private app: App;
   private skyMat!: THREE.MeshBasicMaterial;
+  /** Label anchors for the spiral arms, filled by buildDisk() (C10). */
+  armAnchors: { name: string; major: boolean; position: THREE.Vector3 }[] = [];
 
   constructor(app: App) {
     this.app = app;
@@ -68,8 +70,10 @@ export class MilkyWay implements Updatable {
     this.sky.position.copy(_camPos);
     this.sky.quaternion.copy(this.app.universe.quaternion).multiply(_baseQ);
     const uniDist = this.app.universe.worldToLocal(_camPos.clone()).length(); // pc from the Sun
-    const fade = THREE.MathUtils.smoothstep(uniDist, 25000, 60000);
-    this.skyMat.opacity = 1 - fade * 0.88; // 1.0 near home → 0.12 at ≥60 kpc
+    // Fade begins ~400 pc out (beyond the local bubble) and the skybox is FULLY
+    // transparent by ~3 kpc — it must never read as a "wall" when traveling (C9).
+    const fade = THREE.MathUtils.smoothstep(uniDist, 400, 3000);
+    this.skyMat.opacity = 1 - fade; // 1.0 near home → 0.0 at ≥3 kpc
   }
 
   /** Bright galactic-core glow so the Milky Way's center is obvious from outside. */
@@ -83,9 +87,30 @@ export class MilkyWay implements Updatable {
     return s;
   }
 
-  /** Spiral-disk particle system, centered on the real galactic-center position. */
+  /**
+   * Spiral-disk particle system, centered on the real galactic-center position.
+   *
+   * Arm model (C10): published log-spiral fit (Vallée 2017 / Reid+2019):
+   *   r(θ) = r_ref · exp((θ − θ_ref) · tan(pitch)),  pitch = 12.8°
+   * Two MAJOR arms (Scutum–Centaurus, Perseus) + minor arms (Sagittarius–Carina,
+   * Norma–Outer) + the Orion–Cygnus spur. r_ref is each arm's galactocentric
+   * radius at the Sun's azimuth (θ = 0 along GC→Sun); the Sun (8.15 kpc) sits on
+   * the spur by construction. Major arms carry double the particle weight.
+   */
   private buildDisk(): THREE.Points {
-    const N = 7000;
+    interface ArmDef { name: string; rRef: number; thetaRefDeg: number; weight: number; major: boolean }
+    const ARMS: ArmDef[] = [
+      { name: "Scutum–Centaurus Arm", rRef: 5000, thetaRefDeg: 30, weight: 1.0, major: true },
+      { name: "Perseus Arm", rRef: 10000, thetaRefDeg: -10, weight: 1.0, major: true },
+      { name: "Sagittarius–Carina Arm", rRef: 6600, thetaRefDeg: 0, weight: 0.55, major: false },
+      { name: "Norma–Outer Arm", rRef: 4300, thetaRefDeg: -30, weight: 0.55, major: false },
+      { name: "Orion–Cygnus Spur", rRef: 8150, thetaRefDeg: 0, weight: 0.4, major: false },
+    ];
+    const PITCH = THREE.MathUtils.degToRad(12.8); // Vallée/Reid mean pitch angle
+    const TAN_PITCH = Math.tan(PITCH);
+    const R_MIN = 2500, R_MAX = 16000;
+    const N_ARMS = 7000, N_BG = 1200;
+    const N = N_ARMS + N_BG;
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
     const size = new Float32Array(N);
@@ -93,29 +118,54 @@ export class MilkyWay implements Updatable {
     const n = GALACTIC_NORMAL.clone();
     const u = GALACTIC_CENTER_PC.clone().negate().projectOnPlane(n).normalize(); // GC→Sun in-plane
     const v = new THREE.Vector3().crossVectors(n, u).normalize();
-    const armCount = 4;
-    for (let i = 0; i < N; i++) {
-      // Log-spiral arms + scatter; radius up to ~17 kpc so the Sun (8.2 kpc) sits inside.
-      const r = 16000 * Math.pow(Math.random(), 0.65);
-      const arm = i % armCount;
-      const theta =
-        (arm / armCount) * Math.PI * 2 +
-        Math.log(Math.max(r, 400) / 1500) * 1.05 +
-        (Math.random() - 0.5) * (0.55 - 0.25 * (r / 16000));
+    const warm = new THREE.Color(0xffe0b0), cool = new THREE.Color(0x9db8ff);
+    const c = new THREE.Color();
+    const place = (i: number, r: number, theta: number, dimScale: number) => {
       const thickness = (Math.random() + Math.random() + Math.random() - 1.5) * 260 * (0.4 + r / 16000);
-      const px = Math.cos(theta) * r, py = Math.sin(theta) * r;
       const p = new THREE.Vector3()
         .copy(GALACTIC_CENTER_PC)
-        .addScaledVector(u, px)
-        .addScaledVector(v, py)
+        .addScaledVector(u, Math.cos(theta) * r)
+        .addScaledVector(v, Math.sin(theta) * r)
         .addScaledVector(n, thickness);
       pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
       // Color: warm/golden toward center, cooler/blue outside (typical galaxy tint).
       const t = Math.min(1, r / 16000);
-      const c = new THREE.Color().lerpColors(new THREE.Color(0xffe0b0), new THREE.Color(0x9db8ff), t);
-      const dim = 0.25 + 0.75 * Math.random();
+      c.lerpColors(warm, cool, t);
+      const dim = (0.25 + 0.75 * Math.random()) * dimScale;
       col[i * 3] = c.r * dim; col[i * 3 + 1] = c.g * dim; col[i * 3 + 2] = c.b * dim;
       size[i] = 450 + Math.random() * 1100;
+    };
+    let i = 0;
+    for (const arm of ARMS) {
+      // Particle count proportional to arm weight; majors denser.
+      const count = Math.round((N_ARMS * arm.weight) / ARMS.reduce((s, a) => s + a.weight, 0));
+      const thetaRef = THREE.MathUtils.degToRad(arm.thetaRefDeg);
+      for (let k = 0; k < count && i < N_ARMS; k++, i++) {
+        // Sample radius log-uniformly so inner arms don't crowd out.
+        const r = R_MIN * Math.pow(R_MAX / R_MIN, Math.random());
+        // Log-spiral azimuth for this radius, plus a Gaussian-ish scatter that
+        // widens slightly with radius (arms get fluffier outward).
+        const theta =
+          thetaRef + Math.log(r / arm.rRef) / TAN_PITCH +
+          (Math.random() + Math.random() + Math.random() - 1.5) * (0.16 + 0.1 * (r / 16000));
+        place(i, r, theta, arm.major ? 1.0 : 0.72);
+      }
+      // Label anchor: on the arm near the solar circle so labels sit inside the view.
+      const rLab = arm.name.startsWith("Orion") ? 8150 : THREE.MathUtils.clamp(arm.rRef, 6000, 10500);
+      const thetaLab = thetaRef + Math.log(rLab / arm.rRef) / TAN_PITCH;
+      this.armAnchors.push({
+        name: arm.name,
+        major: arm.major,
+        position: new THREE.Vector3()
+          .copy(GALACTIC_CENTER_PC)
+          .addScaledVector(u, Math.cos(thetaLab) * rLab)
+          .addScaledVector(v, Math.sin(thetaLab) * rLab),
+      });
+    }
+    // Smooth background disk underlay so the galaxy reads as a whole between arms.
+    for (; i < N; i++) {
+      const r = 16000 * Math.pow(Math.random(), 0.65);
+      place(i, r, Math.random() * Math.PI * 2, 0.35);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));

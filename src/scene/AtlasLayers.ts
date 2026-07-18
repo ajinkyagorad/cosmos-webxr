@@ -264,18 +264,20 @@ export class LocalGroupLayer {
     geo.setAttribute("gcol", new THREE.BufferAttribute(lcol, 3));
     // Oriented core+envelope sprites (Milky Way Atlas shader — sizes are real half-light radii).
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uBright: { value: 1 }, uMinPx: { value: 2 }, uProjH: { value: 700 }, uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) } },
+      uniforms: { uBright: { value: 1 }, uMinPx: { value: 2 }, uProjH: { value: 700 }, uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) }, uBoost: { value: 1 } },
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       vertexShader: /* glsl */ `
         attribute float psize; attribute float alp; attribute float ell; attribute float ang; attribute vec3 gcol;
         varying float vA; varying float vE; varying float vAng; varying vec3 vCol;
-        uniform float uProjH, uBright, uMinPx, uPixelRatio;
+        uniform float uProjH, uBright, uMinPx, uPixelRatio, uBoost;
         void main(){
           vec4 mv = modelViewMatrix * vec4(position,1.0);
           float d = max(-mv.z, 1e-6);
           float mscale = length(vec3(modelViewMatrix[0][0], modelViewMatrix[0][1], modelViewMatrix[0][2]));
           float px = psize * mscale / d * uProjH * uPixelRatio;
+          px = max(px, uBoost * 7.0 * uPixelRatio);          // galaxy boost: visibility floor
           vA = clamp(alp * uBright * clamp(px/2.0, 0.3, 1.4), 0.0, 1.0);
+          vA = max(vA, uBoost * 0.30);                       // boost: brightness floor
           vE = ell; vAng = ang; vCol = gcol;
           gl_PointSize = clamp(px*1.6, uMinPx, 500.0);
           gl_Position = projectionMatrix * mv;
@@ -297,6 +299,11 @@ export class LocalGroupLayer {
     });
     this.points = new THREE.Points(geo, mat);
     this.points.frustumCulled = false;
+  }
+
+  /** Galaxy boost (C11): distance-compensated brightness/size floor so majors never vanish. */
+  setBoost(on: boolean): void {
+    ((this.points.material as THREE.ShaderMaterial).uniforms.uBoost as { value: number }).value = on ? 1 : 0;
   }
 
   toSelectables(): Selectable[] {
