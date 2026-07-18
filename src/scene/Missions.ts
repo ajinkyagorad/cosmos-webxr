@@ -98,7 +98,13 @@ export class MissionsLayer {
         out.push({
           id: `mission-${m.n}`, name: m.n, kind: "mission", object: o,
           radiusWorld: Math.max(o.scale.x * 0.5, 1e-5),
-          describe: () => `<b>${esc(m.n)}</b><br>${esc(m.note)}<br><span class="dim">NASA/ESA published mission data (approximate placement)</span>`,
+          describe: () => {
+            const rows = [`<b>${esc(m.n)}</b>`, esc(m.note)];
+            if (m.agency) rows.push(`Agency: ${esc(m.agency)}`);
+            if (m.status) rows.push(`Status: ${esc(m.status)}`);
+            rows.push(`<span class="dim">NASA/ESA published mission data (approximate placement)</span>`);
+            return rows.join("<br>");
+          },
         });
       }
     });

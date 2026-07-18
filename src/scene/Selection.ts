@@ -117,9 +117,12 @@ export class Selection implements Updatable {
   clear() { this.select(null); }
 
   /**
-   * Angular pick with magnetism: find the registry object nearest to the ray within a
-   * tolerant cone. The ray (world space) is transformed into universe-local space so
-   * distances and radii share one unit (pc) regardless of the current log scale.
+   * Pick with magnetism: the ray (world space) is transformed into universe-local
+   * space so distances and radii share one unit (pc) regardless of the log scale.
+   * #46: object selectables (planets/moons/Sun/missions) are tested as TRUE
+   * ray-sphere intersections against their CURRENT rendered radius (including
+   * live size exaggeration), so a ray anywhere inside the visible disc hits;
+   * catalog selectables keep the angular-cone magnetism.
    * tolScale widens the cone (used for imprecise hand aim).
    */
   private _localRay = new THREE.Ray();
@@ -130,6 +133,7 @@ export class Selection implements Updatable {
     this._localRay.direction.normalize();
     const origin = this._localRay.origin;
     const dir = this._localRay.direction;
+    const uniScale = this.app.universe.scale.x;
     let best: Selectable | null = null;
     let bestScore = Infinity;
     for (const s of this.items) {
@@ -139,15 +143,29 @@ export class Selection implements Updatable {
       if (dist < 1e-9) continue;
       const cosA = THREE.MathUtils.clamp(_toObj.dot(dir) / dist, -1, 1);
       if (cosA < 0.4) continue; // behind or far off-axis
+      // #46: live radius in universe-local units (rendered radius for objects).
+      const uniR = s.object
+        ? Math.max(this.worldRadius(s) / uniScale, s.radiusWorld)
+        : s.radiusWorld;
+      // True ray-sphere test against the rendered disc.
+      const tAlong = _toObj.dot(dir);
+      if (tAlong > 0) {
+        const perp2 = Math.max(_toObj.lengthSq() - tAlong * tAlong, 0);
+        if (perp2 <= uniR * uniR) {
+          const score = Math.sqrt(perp2) / Math.max(uniR, 1e-12); // 0 center → 1 limb
+          if (score < bestScore) { bestScore = score; best = s; }
+          continue;
+        }
+      }
       const angle = Math.acos(cosA);
-      // Tolerance: at least 0.5°, up to 4.5°, scaled by object radius (ray magnetism).
+      // Angular magnetism: at least 0.5°, up to 4.5°, scaled by object radius.
       const tol = THREE.MathUtils.clamp(
-        Math.atan((s.radiusWorld * 4) / dist),
+        Math.atan((uniR * 2.5) / dist),
         THREE.MathUtils.degToRad(0.5),
         THREE.MathUtils.degToRad(4.5),
       ) * tolScale;
-      if (angle < tol && angle < bestScore) {
-        bestScore = angle;
+      if (angle < tol && 1 + angle < bestScore) {
+        bestScore = 1 + angle;
         best = s;
       }
     }

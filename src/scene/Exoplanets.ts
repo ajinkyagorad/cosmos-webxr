@@ -92,6 +92,34 @@ export function describeExoplanet(p: Exoplanet): string {
   if (p.bm) rows.push(`Mass: ${p.bm.toFixed(2)} M⊕`);
   if (p.p) rows.push(`Orbital period: ${p.p.toFixed(1)} days`);
   if (p.st) rows.push(`Host spectral type: ${esc(p.st)}`);
+  const teq = estimateTeq(p);
+  if (teq != null) {
+    rows.push(`Equilibrium temp: ≈${Math.round(teq)} K ` +
+      `<span class="dim">(estimate: solar-type host from spectral class, albedo 0.3)</span>`);
+  }
   rows.push(`<span class="dim">NASA Exoplanet Archive</span>`);
   return rows.join("<br>");
+}
+
+/** Spectral-class → effective temperature (main sequence, standard values). */
+const TEFF_BY_CLASS: Record<string, number> = {
+  O: 30000, B: 15000, A: 9000, F: 7000, G: 5800, K: 4800, M: 3200, L: 2300, T: 1300,
+};
+
+/**
+ * Rough equilibrium temperature estimate (clearly labeled in the UI):
+ * host luminosity from spectral class (L ∝ T_eff⁴, R≈R☉), orbital distance from
+ * the measured period via Kepler's third law (M from mass–luminosity), then
+ * T_eq = 278 K · L^¼ · a^(−½) (Earth-like albedo 0.3, full redistribution).
+ */
+function estimateTeq(p: Exoplanet): number | null {
+  if (!p.st || !p.p) return null;
+  const cls = p.st.trim().charAt(0).toUpperCase();
+  const teff = TEFF_BY_CLASS[cls];
+  if (!teff) return null;
+  const L = Math.pow(teff / 5778, 4);       // L☉ (R ≈ R☉ assumption)
+  const M = Math.pow(L, 1 / 3.5);           // M☉ (mass–luminosity)
+  const aAU = Math.cbrt(M * Math.pow(p.p / 365.25, 2)); // Kepler III
+  if (!(aAU > 0)) return null;
+  return 278.3 * Math.pow(L, 0.25) / Math.sqrt(aAU);
 }

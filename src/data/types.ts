@@ -23,6 +23,7 @@ export interface DSOData { count: number; source: string; objects: DSO[]; }
 export interface Mission {
   n: string; cat: string; host: string; alt_km?: number; dist_au?: number;
   ra_h?: number; dec_d?: number; lat?: number; lon?: number; note: string;
+  agency?: string; status?: string;
 }
 export interface MissionData { basis: string; count: number; missions: Mission[]; }
 

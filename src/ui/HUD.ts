@@ -25,6 +25,10 @@ export class HUD {
     this.wirePanels();
     this.wireTarget();
     selection.onTargetChanged = (s) => this.showTarget(s);
+    // Live-refresh the metadata block when the object-info toggle flips.
+    settings.onChange((k) => {
+      if (k === "objectInfo" && this.selection.target) this.showTarget(this.selection.target);
+    });
     nav.onJumpProgress = (state, charge) => {
       $("jump-progress").classList.toggle("hidden", state === "idle");
       $("jump-progress-fill").style.width = `${Math.round(charge * 100)}%`;
@@ -89,7 +93,8 @@ export class HUD {
     $("reticle").classList.toggle("locked", !!s);
     if (s) {
       $("target-name").textContent = s.name;
-      $("target-info").innerHTML = s.describe();
+      // #50: the "object info" toggle gates the metadata block (name + actions stay).
+      $("target-info").innerHTML = settings.get("objectInfo") ? s.describe() : "";
       this.audio.playTick(1400);
     }
   }
@@ -143,6 +148,7 @@ export class HUD {
       { key: "layerCinematic", label: "✦ Cinematic universes (fiction)" },
       { key: "labels", label: "Labels" },
       { key: "hoverLabels", label: "Hover labels (pointer dwell)" },
+      { key: "objectInfo", label: "Object info panels" },
       { key: "trails", label: "Travel trails" },
       { key: "starNames", label: "Star names on hover" },
       { key: "orbits", label: "Orbit lines" },

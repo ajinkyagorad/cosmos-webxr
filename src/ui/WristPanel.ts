@@ -32,6 +32,7 @@ const LAYER_KEYS: { key: string; label: string }[] = [
   { key: "galaxyBoost", label: "Galaxy boost" },
   { key: "layer2MRS", label: "2MRS" },
   { key: "hoverLabels", label: "Hover labels" },
+  { key: "objectInfo", label: "Object info" },
   { key: "trails", label: "Trails" },
   { key: "layerCinematic", label: "✦ Cinematic" },
 ];
@@ -281,7 +282,7 @@ export class WristPanel implements Updatable {
       const col = i % 2, row = Math.floor(i / 2);
       this.btn({
         id: `layer:${l.key}`, label: l.label,
-        x: 12 + col * 250, y: 92 + row * 50, w: 238, h: 44,
+        x: 12 + col * 250, y: 92 + row * 46, w: 238, h: 40,
         active: settings.get(l.key as never) as boolean,
       });
     });

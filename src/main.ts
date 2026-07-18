@@ -284,6 +284,7 @@ async function boot() {
       radiusWorld: 0.5,
       describe: () =>
         `<b>${n.n}</b><br>Apparent magnitude: ${n.m.toFixed(2)}${n.s ? `<br>Spectral type: ${n.s}` : ""}<br>` +
+        `Color index B−V: ${b[i * 5 + 4].toFixed(2)}<br>` +
         `Distance: ${formatDistancePC(Math.hypot(b[i * 5], b[i * 5 + 1], b[i * 5 + 2]))}<br><span class="dim">HYG 4.0 / Gaia DR3</span>`,
     }]);
   });
@@ -359,23 +360,38 @@ async function boot() {
   const hoverBySrc = new Map<string, Selectable | null>();
   let hoverSel: Selectable | null = null;
   let hoverDwell = 0;
+  let shownSel: Selectable | null = null; // chip currently displayed for this object
   const setHoverCandidate = (src: string, s: Selectable | null) => { hoverBySrc.set(src, s); };
   const effHover = (): Selectable | null =>
     hoverBySrc.get("right") ?? hoverBySrc.get("left") ?? hoverBySrc.get("hand1") ??
     hoverBySrc.get("hand0") ?? hoverBySrc.get("desktop") ?? null;
+  const _chipPos = new THREE.Vector3(), _chipCam = new THREE.Vector3(), _chipDir = new THREE.Vector3();
+  // #51: a shown chip PERSISTS while its object stays within ~30° of the view
+  // center — small pointer slips no longer dismiss it. Dismissed by a new
+  // selection, another object dwelling in, the toggles, or >30° off-center.
+  selection.onTargetChanged = () => { shownSel = null; hoverChip.hide(); };
   app.addUpdatable({
     update(dt: number) {
-      const s = settings.get("hoverLabels") ? effHover() : null;
-      if (s !== hoverSel) { hoverSel = s; hoverDwell = 0; hoverChip.hide(); }
-      else if (s) {
+      const allow = settings.get("hoverLabels") && settings.get("objectInfo");
+      const s = allow ? effHover() : null;
+      if (s !== hoverSel) { hoverSel = s; hoverDwell = 0; }
+      if (s) {
         hoverDwell += dt;
-        if (hoverDwell >= 0.4) {
-          const wp = selection.getWorldPosition(s, new THREE.Vector3());
-          const dUni = selection.getUniPosition(s, new THREE.Vector3())
-            .distanceTo(nav.universePos(new THREE.Vector3()));
-          hoverChip.show(s.name, formatDistancePC(Math.abs(dUni)), wp);
-        }
+        if (hoverDwell >= 0.4 && s !== shownSel) shownSel = s; // dwell-in (replaces)
       }
+      if (!shownSel) return;
+      const wp = selection.getWorldPosition(shownSel, _chipPos);
+      app.camera.getWorldPosition(_chipCam);
+      app.camera.getWorldDirection(_chipDir);
+      const offAxis = _chipDir.angleTo(_chipPos.clone().sub(_chipCam).normalize());
+      if (!allow || offAxis > THREE.MathUtils.degToRad(30)) {
+        shownSel = null;
+        hoverChip.hide();
+        return;
+      }
+      const dUni = selection.getUniPosition(shownSel, new THREE.Vector3())
+        .distanceTo(nav.universePos(new THREE.Vector3()));
+      hoverChip.show(shownSel.name, formatDistancePC(Math.abs(dUni)), wp);
     },
   });
 

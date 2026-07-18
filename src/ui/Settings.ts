@@ -27,6 +27,12 @@ export interface SettingsState {
   hoverLabels: boolean;
   trails: boolean;
   starNames: boolean;
+  /** Object info panels/metadata on selection (default ON). */
+  objectInfo: boolean;
+  /** Coordinate grid style: 0 cartesian · 1 spherical · 2 cylindrical. */
+  gridMode: number;
+  /** Distance dimming: 0 none · 1 realistic (flux ∝ 1/d²) · 2 artificial. */
+  distanceDimming: number;
   /** Simulation clock rate index into TIME_RATES (0 = real time 1 s/s). */
   timeWarp: number;
   // solar system
@@ -67,6 +73,9 @@ const DEFAULTS: SettingsState = {
   hoverLabels: true,
   trails: true,
   starNames: true,
+  objectInfo: true,
+  gridMode: 2,
+  distanceDimming: 2,
   timeWarp: 0,
   labels: true,
   orbits: true,
