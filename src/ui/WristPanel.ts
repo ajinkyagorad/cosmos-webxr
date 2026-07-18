@@ -153,10 +153,28 @@ export class WristPanel implements Updatable {
     }
   }
 
-  setHover(id: string | null) {
-    if (id !== this.hoverBtn) {
-      this.hoverBtn = id;
-      if (id) this.onHover?.();
+  /**
+   * #35: source-aware hover with a re-arm guard. Multiple pointers (right
+   * controller + two hands) report hovers every frame; the effective hover is
+   * the highest-priority non-null one, so sources can no longer fight and
+   * retrigger the haptic every frame. A single pulse fires per button-ENTER,
+   * and the same button cannot retrigger until it has been exited.
+   */
+  private hoverBySrc = new Map<string, string | null>();
+  private lastPulseId: string | null = null;
+  private hoverRearmed = true;
+
+  setHover(id: string | null, src = "main") {
+    this.hoverBySrc.set(src, id);
+    const eff = this.hoverBySrc.get("right") ?? this.hoverBySrc.get("hand1") ??
+      this.hoverBySrc.get("hand0") ?? this.hoverBySrc.get("main") ?? null;
+    if (eff === this.hoverBtn) return;
+    this.hoverBtn = eff;
+    if (eff === null) { this.hoverRearmed = true; return; } // exited → re-arm
+    if (eff !== this.lastPulseId || this.hoverRearmed) {
+      this.lastPulseId = eff;
+      this.hoverRearmed = false;
+      this.onHover?.();
     }
   }
 

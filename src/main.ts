@@ -383,7 +383,7 @@ async function boot() {
   // the hit point (this is also the hover-label source for controllers).
   xr.onHoverRay = (raycaster, hand) => {
     const btn = wrist.intersect(raycaster);
-    if (hand === "right") wrist.setHover(btn);
+    if (hand === "right") wrist.setHover(btn, "right");
     if (btn !== null) {
       setHoverCandidate(hand, null);
       const hit = raycaster.intersectObject(wrist.mesh, false)[0];
@@ -399,7 +399,7 @@ async function boot() {
   const aimProxy = new THREE.Object3D();
   hands.onAimRay = (raycaster, handIndex) => {
     const btn = wrist.intersect(raycaster);
-    wrist.setHover(btn);
+    wrist.setHover(btn, `hand${handIndex}`);
     if (btn !== null) { setHoverCandidate(`hand${handIndex}`, null); return wrist.mesh; }
     const s = selection.pickFromRay(raycaster, 1.6);
     setHoverCandidate(`hand${handIndex}`, s);
@@ -438,7 +438,8 @@ async function boot() {
     xr.pulse("right", 0.9, 200);
     xr.pulse("left", 0.9, 200);
   };
-  wrist.onHover = () => xr.pulse("right", 0.15, 15);
+  // #35: ONE short pulse per button-enter (0.15 amplitude, 12 ms) — never per-frame.
+  wrist.onHover = () => xr.pulse("right", 0.15, 12);
 
   // ---------- destinations list ----------
   const allDest = buildDestinations(hud, selection, { solar, dso, compact, exoplanets, missions, cinematic });

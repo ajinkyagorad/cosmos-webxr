@@ -17,7 +17,10 @@ import { settings } from "../ui/Settings";
  *  selectable object, or null = free space). */
 export interface HoverHit { point: THREE.Vector3; }
 
-const BEAM_COLOR = 0x9fd0ff;
+// #34: the active pointer ray is a warm AMBER laser (bright, additive glow feel)
+// so it never blends into blue-white environment lines (grid, orbits, constellations).
+const BEAM_COLOR = 0xffb347;
+const CURSOR_COLOR = 0xffd27a;
 const BEAM_REACH = 4; // metres when pointing into free space
 
 export class XRControls implements Updatable {
@@ -63,9 +66,16 @@ export class XRControls implements Updatable {
       this.grips.push(g as unknown as THREE.Group);
       this.app.rig.add(c, g);
       (c as unknown as THREE.Group).addEventListener("connected" as never, (e: unknown) => {
+        // #33: WebXR fires 'connected' on controller slots for HAND-TRACKING
+        // input sources too (Quest synthesizes a pointer pose per hand). Mark
+        // those and never draw a controller beam for them — the hand's own
+        // laser in HandControls is the single ray for that hand.
+        const src = (e as { data?: { handedness?: string; hand?: unknown } }).data;
+        const isHand = !!src?.hand;
         (c as unknown as THREE.Group).userData.hand =
-          (e as { data?: { handedness?: string } }).data?.handedness ?? (i === 1 ? "right" : "left");
-        (c as unknown as THREE.Group).userData.connected = true;
+          src?.handedness ?? (i === 1 ? "right" : "left");
+        (c as unknown as THREE.Group).userData.isHand = isHand;
+        (c as unknown as THREE.Group).userData.connected = !isHand;
       });
       (c as unknown as THREE.Group).addEventListener("disconnected" as never, () => {
         (c as unknown as THREE.Group).userData.connected = false;
@@ -88,7 +98,7 @@ export class XRControls implements Updatable {
       // Exactly ONE beam per controller (world-space line, updated every frame).
       const beamGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
       const beam = new THREE.Line(beamGeo, new THREE.LineBasicMaterial({
-        color: BEAM_COLOR, transparent: true, opacity: 0.75,
+        color: BEAM_COLOR, transparent: true, opacity: 0.9,
         blending: THREE.AdditiveBlending, depthWrite: false,
       }));
       beam.visible = false;
@@ -98,10 +108,10 @@ export class XRControls implements Updatable {
       this.beams.push(beam);
     }
 
-    // Cursor dot at the actual hit point (panel or object).
+    // Cursor dot at the actual hit point (panel or object): brighter warm core.
     this.cursor = new THREE.Mesh(
       new THREE.SphereGeometry(1, 12, 8),
-      new THREE.MeshBasicMaterial({ color: BEAM_COLOR, transparent: true, opacity: 0.9, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: CURSOR_COLOR, transparent: true, opacity: 1.0, depthTest: false, blending: THREE.AdditiveBlending }),
     );
     this.cursor.renderOrder = 70;
     this.cursor.visible = false;

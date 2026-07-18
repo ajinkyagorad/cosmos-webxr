@@ -22,6 +22,9 @@ interface HandRig {
   aimOrigin: THREE.Vector3;
   hasAim: boolean;
   laser: THREE.Line;
+  meshModel: THREE.Object3D | null; // CDN hand model (null until loaded)
+  needsFallback: boolean;   // bake bone-model once CDN model is known-failed
+  fallbackBaked: boolean;
 }
 
 const TAP_MAX_SEC = 0.28;     // pinch shorter than this with little motion = tap (select)
@@ -48,53 +51,113 @@ export class HandControls implements Updatable {
 
     const mkLaser = () => {
       const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
+      // #34: same warm amber as controller beams — one distinct pointer style.
       const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
-        color: 0x9fd0ff, transparent: true, opacity: 0.55,
+        color: 0xffb347, transparent: true, opacity: 0.9,
+        blending: THREE.AdditiveBlending, depthWrite: false,
       }));
       line.visible = false;
       line.frustumCulled = false;
+      line.renderOrder = 65;
       app.scene.add(line); // world-space line
       return line;
     };
 
     this.rigs = [
-      { hand: null, pinching: false, grabbing: false, pinchStart: 0, tipAtStart: new THREE.Vector3(), aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser() },
-      { hand: null, pinching: false, grabbing: false, pinchStart: 0, tipAtStart: new THREE.Vector3(), aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser() },
+      { hand: null, pinching: false, grabbing: false, pinchStart: 0, tipAtStart: new THREE.Vector3(), aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser(), meshModel: null, needsFallback: false, fallbackBaked: false },
+      { hand: null, pinching: false, grabbing: false, pinchStart: 0, tipAtStart: new THREE.Vector3(), aimDir: new THREE.Vector3(0, 0, -1), aimOrigin: new THREE.Vector3(), hasAim: false, laser: mkLaser(), meshModel: null, needsFallback: false, fallbackBaked: false },
     ];
 
     for (let i = 0; i < 2; i++) {
       const h = this.app.renderer.xr.getHand(i) as unknown as THREE.Group;
       this.rigs[i].hand = h;
       this.app.rig.add(h);
-      // Visible hand model (procedural joint spheres — no external assets needed).
+      // #32: real hand models — XRHandModelFactory 'mesh' profile (WebXR hands
+      // assets CDN). If it never loads (offline/unsupported), bake a low-poly
+      // skinned-look bone+palm model from the live joints — NEVER blob spheres.
       try {
         const factory = new XRHandModelFactory();
-        const model = factory.createHandModel(h as never, "spheres");
+        const model = factory.createHandModel(h as never, "mesh");
         h.add(model as unknown as THREE.Object3D);
+        this.rigs[i].meshModel = model as unknown as THREE.Object3D;
       } catch {
-        this.addFallbackHandViz(h);
+        this.rigs[i].needsFallback = true;
       }
     }
 
     // Cursor dot shown at the magnetic pick candidate under the hand ray.
     this.cursor = new THREE.Mesh(
       new THREE.SphereGeometry(1, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0x7db4ff, transparent: true, opacity: 0.9, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 1.0, depthTest: false, blending: THREE.AdditiveBlending }),
     );
     this.cursor.renderOrder = 70;
     this.cursor.visible = false;
     app.scene.add(this.cursor);
   }
 
-  /** Fallback: tiny spheres on each joint (used if the factory import fails). */
-  private addFallbackHandViz(hand: THREE.Group) {
-    const joints = (hand as unknown as { joints?: Record<string, THREE.Object3D> }).joints;
-    if (!joints) return;
-    const mat = new THREE.MeshBasicMaterial({ color: 0xbfd8ff });
-    for (const name of Object.keys(joints)) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.006, 8, 6), mat);
-      joints[name].add(s);
+  /**
+   * #32 fallback: low-poly "skinned-look" hand baked from the live joints —
+   * bone capsules along each finger chain + knuckle joints + a palm slab.
+   * Baked once (bones are rigid); attached into the joint hierarchy so it
+   * follows tracking exactly. Never blob-only spheres.
+   */
+  private static FINGER_CHAINS: string[][] = [
+    ["wrist", "thumb-metacarpal", "thumb-phalanx-proximal", "thumb-phalanx-distal", "thumb-tip"],
+    ["wrist", "index-finger-metacarpal", "index-finger-phalanx-proximal", "index-finger-phalanx-intermediate", "index-finger-phalanx-distal", "index-finger-tip"],
+    ["wrist", "middle-finger-metacarpal", "middle-finger-phalanx-proximal", "middle-finger-phalanx-intermediate", "middle-finger-phalanx-distal", "middle-finger-tip"],
+    ["wrist", "ring-finger-metacarpal", "ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal", "ring-finger-tip"],
+    ["wrist", "pinky-finger-metacarpal", "pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal", "pinky-finger-tip"],
+  ];
+
+  private bakeFallbackHand(rig: HandRig): boolean {
+    const hand = rig.hand;
+    const joints = hand ? this.joints(hand) : undefined;
+    if (!hand || !joints?.["wrist"] || !joints["middle-finger-metacarpal"]) return false;
+    // Don't bake before tracking has produced real (non-coincident) joint poses.
+    const w = new THREE.Vector3(), m = new THREE.Vector3();
+    joints["wrist"].getWorldPosition(w);
+    joints["middle-finger-metacarpal"].getWorldPosition(m);
+    if (w.distanceToSquared(m) < 1e-8) return false;
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xd9b48c, roughness: 0.85, metalness: 0.0,
+      emissive: 0x2a1a0c, // faint self-light so hands read in deep space
+    });
+    const up = new THREE.Vector3(0, 1, 0);
+    const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+
+    for (const chain of HandControls.FINGER_CHAINS) {
+      for (let k = 0; k + 1 < chain.length; k++) {
+        const ja = joints[chain[k]], jb = joints[chain[k + 1]];
+        if (!ja || !jb) continue;
+        ja.getWorldPosition(tmpA); jb.getWorldPosition(tmpB);
+        const local = ja.worldToLocal(tmpB.clone()); // child offset in a's frame
+        const len = local.length();
+        if (len < 1e-5) continue;
+        const r = k === 0 && chain[1].includes("metacarpal") ? 0.006 : 0.0045;
+        const bone = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.85, len, 6), mat);
+        bone.position.copy(local).multiplyScalar(0.5);
+        bone.quaternion.setFromUnitVectors(up, local.clone().normalize());
+        bone.userData.fbHand = true;
+        ja.add(bone);
+        // Knuckle cap (small, part of the bone look — not a blob hand).
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(r * 1.15, 6, 5), mat);
+        cap.userData.fbHand = true;
+        jb.add(cap);
+      }
     }
+    // Palm slab: wrist → middle MCP, flattened box.
+    const wrist = joints["wrist"];
+    const palmLocal = wrist.worldToLocal(m.clone());
+    const palmLen = Math.max(palmLocal.length(), 0.02);
+    const palm = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.014, palmLen), mat);
+    palm.position.copy(palmLocal).multiplyScalar(0.5);
+    palm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), palmLocal.clone().normalize());
+    palm.userData.fbHand = true;
+    wrist.add(palm);
+
+    rig.fallbackBaked = true;
+    return true;
   }
 
   private joints(hand: THREE.Group): Record<string, THREE.Object3D> | undefined {
@@ -145,6 +208,23 @@ export class HandControls implements Updatable {
 
   update(dt: number, _t: number) {
     this.clock += dt;
+    // #32: after 3 s, if the CDN hand mesh never materialized, bake the
+    // bone-model fallback from live joints; if it loads late, drop the fallback.
+    if (this.clock > 3) {
+      for (const rig of this.rigs) {
+        if (!rig.hand) continue;
+        let hasMesh = false;
+        rig.meshModel?.traverse((o) => { if ((o as THREE.Mesh).isMesh) hasMesh = true; });
+        if (rig.fallbackBaked && hasMesh) {
+          rig.hand.traverse((o) => {
+            if (o.userData.fbHand) (o.parent?.remove(o), (o as THREE.Mesh).geometry?.dispose());
+          });
+          rig.fallbackBaked = false;
+        } else if (!rig.fallbackBaked && !hasMesh) {
+          this.bakeFallbackHand(rig);
+        }
+      }
+    }
     if (this.app.mode === "desktop") {
       this.cursor.visible = false;
       for (const r of this.rigs) r.laser.visible = false;
