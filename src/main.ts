@@ -516,9 +516,9 @@ async function boot() {
   settings.onChange(() => applyLayers());
   applyLayers();
 
-  // Grid band follows the zoom level every frame (rebuilds only on band change).
+  // Grid band follows the zoom level every frame (rebuilds on band/mode change, #37).
   app.addUpdatable({
-    update() { grid.update(nav.logScale, settings.get("orbitExaggeration")); },
+    update() { grid.update(nav.logScale, settings.get("orbitExaggeration"), settings.get("gridMode")); },
   });
 
   // ---------- comfort vignette + per-frame misc ----------

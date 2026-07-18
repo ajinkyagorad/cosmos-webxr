@@ -193,4 +193,11 @@ body {
 .layer-item input, .setting-item input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
 .setting-item input[type="range"] { width: 140px; accent-color: var(--accent); }
 .setting-item .setting-value { font-size: 11px; color: var(--accent); width: 52px; text-align: right; }
+.seg-group { display: flex; gap: 3px; }
+.seg-btn {
+  background: rgba(125, 180, 255, 0.08); color: var(--dim); border: 1px solid rgba(125, 180, 255, 0.25);
+  border-radius: 5px; padding: 3px 7px; font-size: 10.5px; cursor: pointer; font-family: inherit;
+}
+.seg-btn:hover { background: rgba(125, 180, 255, 0.18); color: var(--fg); }
+.seg-btn.active { background: var(--accent); color: #08101f; border-color: var(--accent); font-weight: 600; }
 .dest-group-title { font-size: 11px; letter-spacing: 0.2em; color: var(--accent); margin: 12px 4px 4px; }

@@ -1,7 +1,14 @@
 // In-XR panel: full functionality — speed/target, jump, Return Home, Back, destinations
 // (paged), all layer toggles (incl. skybox), settings (vignette/turn/music/volume/elevation).
 // Attachable to the left wrist or pinched off to float fixed in space (grab again to re-attach).
+//
+// #36: the panel face is a gently curved slab with real depth, and every button is a
+// volumetric "soft cuboid" — a rounded 3D body floating a few mm proud of the face,
+// with its label on a per-button face texture. Hover LIFTS the button toward the
+// pointer (+3 mm, lerped); a press visibly dips it. The 512×640 canvas remains for
+// readouts/headers only — hit testing still uses the same canvas-coordinate rects.
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import type { Updatable, App } from "../core/App";
 import type { Navigation } from "../controls/Navigation";
 import type { Selection, Selectable } from "../scene/Selection";
@@ -10,6 +17,32 @@ import { formatSpeed, formatDistancePC, PC_IN_KM } from "../util/astro";
 
 interface Btn { id: string; label: string; x: number; y: number; w: number; h: number; active?: boolean; dim?: boolean; }
 type Tab = "main" | "dest" | "layers" | "settings";
+
+/** One volumetric button: rounded body + label face, pooled across tabs/pages. */
+interface Cuboid {
+  id: string;
+  group: THREE.Group;
+  body: THREE.Mesh;
+  face: THREE.Mesh;
+  faceCanvas: HTMLCanvasElement;
+  faceCtx: CanvasRenderingContext2D;
+  faceTex: THREE.CanvasTexture;
+  sig: string;          // visual signature — face redrawn only when this changes
+  z: number;            // current lift (animated)
+  baseZ: number;        // rest position incl. panel curvature
+  pressedAt: number;    // seconds timestamp of last press (−1 = never)
+  seen: boolean;        // rebuilt each update; unseen cuboids are hidden
+}
+
+const PANEL_W = 0.24, PANEL_H = 0.3;       // metres
+const CANVAS_W = 512, CANVAS_H = 640;      // canvas px ↔ panel metres
+const BTN_DEPTH = 0.006;                    // cuboid thickness
+const HOVER_LIFT = 0.0035;
+const PRESS_DIP = 0.002;
+const BEND_K = 0.004;                       // panel curvature: edge dip in metres
+
+/** Panel-face z at local x (gentle cylindrical curve, edges curl away from user). */
+const bendZ = (x: number) => -BEND_K * (x / (PANEL_W / 2)) * (x / (PANEL_W / 2));
 
 const LAYER_KEYS: { key: string; label: string }[] = [
   { key: "labels", label: "Labels" },
@@ -56,20 +89,40 @@ export class WristPanel implements Updatable {
   detached = false;
   onHover: (() => void) | null = null;
 
+  // #36 volumetric button pool
+  private cuboids = new Map<string, Cuboid>();
+  private unitBox = new RoundedBoxGeometry(1, 1, 1, 4, 0.16);
+  private unitPlane = new THREE.PlaneGeometry(1, 1);
+  private clockS = 0;
+
   constructor(app: App, nav: Navigation, selection: Selection) {
     this.app = app;
     this.nav = nav;
     this.selection = selection;
     this.canvas = document.createElement("canvas");
-    this.canvas.width = 512; this.canvas.height = 640;
+    this.canvas.width = CANVAS_W; this.canvas.height = CANVAS_H;
     this.ctx2d = this.canvas.getContext("2d")!;
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
+
+    // Curved face (slight cylindrical bend for depth, #36).
+    const faceGeo = new THREE.PlaneGeometry(PANEL_W, PANEL_H, 20, 1);
+    const fp = faceGeo.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < fp.count; i++) fp.setZ(i, bendZ(fp.getX(i)));
+    faceGeo.computeVertexNormals();
     this.mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.24, 0.3),
+      faceGeo,
       new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, side: THREE.DoubleSide }),
     );
     this.mesh.visible = false;
+
+    // Backing slab — the dashboard itself is a solid object, not a floating sheet.
+    const slab = new THREE.Mesh(
+      new RoundedBoxGeometry(PANEL_W + 0.008, PANEL_H + 0.008, 0.005, 3, 0.004),
+      new THREE.MeshBasicMaterial({ color: 0x0a1222 }),
+    );
+    slab.position.z = -0.0035;
+    this.mesh.add(slab);
   }
 
   /** Attach to the left controller grip (called once XR starts). */
@@ -119,6 +172,8 @@ export class WristPanel implements Updatable {
   }
 
   press(id: string) {
+    const cub = this.cuboids.get(id);
+    if (cub) cub.pressedAt = this.clockS; // visible dip (#36)
     if (id.startsWith("tab:")) { this.tab = id.slice(4) as Tab; this.page = 0; return; }
     if (id.startsWith("page:")) {
       const pages = Math.max(1, Math.ceil(this.destinations.length / this.perPage()));
@@ -135,6 +190,12 @@ export class WristPanel implements Updatable {
       return;
     }
     if (id.startsWith("layer:")) { settings.toggle(id.slice(6) as never); return; }
+    if (id.startsWith("grid:")) {
+      settings.set("gridMode", parseInt(id.slice(5)) as never);
+      settings.set("layerGrid", true as never);
+      return;
+    }
+    if (id.startsWith("dim:")) { settings.set("distanceDimming", parseInt(id.slice(4)) as never); return; }
     switch (id) {
       case "jump": if (this.selection.target) this.nav.quickJump(this.selection.target); break;
       case "stop": this.nav.stop(); break;
@@ -187,23 +248,109 @@ export class WristPanel implements Updatable {
   private get acc(): string { return settings.get("layerCinematic") ? "255,106,53" : "125,180,255"; }
   private get accHex(): string { return settings.get("layerCinematic") ? "#ff7a3c" : "#7db4ff"; }
 
+  /** Register a button for this frame: recessed slot on the 2D face + a volumetric cuboid. */
   private btn(b: Btn) {
     const g = this.ctx2d;
-    g.fillStyle = this.hoverBtn === b.id ? `rgba(${this.acc},0.55)`
-      : b.active ? `rgba(${this.acc},0.30)` : "rgba(30,45,75,0.85)";
-    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 10); g.fill();
-    g.strokeStyle = `rgba(${this.acc},0.6)`; g.lineWidth = 2; g.stroke();
-    g.fillStyle = b.dim ? "#8fa3c0" : "#eaf2ff";
-    g.font = "600 23px system-ui";
-    g.textAlign = "center";
-    const label = b.label.length > 20 ? b.label.slice(0, 19) + "…" : b.label;
-    g.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 8);
-    g.textAlign = "left";
+    // Recessed slot (shadow bed the cuboid floats over).
+    g.fillStyle = "rgba(2,6,14,0.55)";
+    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 12); g.fill();
     this.buttons.push(b);
+    this.queueCuboid(b);
   }
 
-  update(_dt: number, _t: number) {
+  /* ------------------------- #36 volumetric buttons ------------------------- */
+
+  private queueCuboid(b: Btn) {
+    let cub = this.cuboids.get(b.id);
+    if (!cub) {
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(this.unitBox, new THREE.MeshBasicMaterial({ color: 0x16233c }));
+      const faceCanvas = document.createElement("canvas");
+      const faceCtx = faceCanvas.getContext("2d")!;
+      const faceTex = new THREE.CanvasTexture(faceCanvas);
+      faceTex.colorSpace = THREE.SRGBColorSpace;
+      const face = new THREE.Mesh(this.unitPlane, new THREE.MeshBasicMaterial({
+        map: faceTex, transparent: true, depthWrite: false,
+      }));
+      face.position.z = 0.5001; // just proud of the body front (unit box, scaled)
+      group.add(body); group.add(face);
+      cub = { id: b.id, group, body, face, faceCanvas, faceCtx, faceTex, sig: "", z: 0, baseZ: 0, pressedAt: -100, seen: false };
+      this.cuboids.set(b.id, cub);
+      this.mesh.add(group);
+    }
+    cub.seen = true;
+
+    // Canvas rect → panel-local metres (canvas y down, panel y up).
+    const wM = (b.w / CANVAS_W) * PANEL_W, hM = (b.h / CANVAS_H) * PANEL_H;
+    const cx = ((b.x + b.w / 2) / CANVAS_W - 0.5) * PANEL_W;
+    const cy = (0.5 - (b.y + b.h / 2) / CANVAS_H) * PANEL_H;
+    cub.group.position.set(cx, cy, bendZ(cx) + BTN_DEPTH / 2 + 0.0006);
+    cub.baseZ = cub.group.position.z;
+    if (cub.z === 0) cub.z = cub.baseZ; // first show: start at rest, never sunk
+    cub.group.position.z = cub.z;
+    cub.group.scale.set(wM, hM, BTN_DEPTH);
+    cub.face.position.z = 0.51; // just proud of the body front (in group z-units)
+
+    const hovered = this.hoverBtn === b.id;
+    const sig = `${b.label}|${b.active ? 1 : 0}|${b.dim ? 1 : 0}|${hovered ? 1 : 0}|${b.w}x${b.h}|${this.acc}`;
+    if (sig !== cub.sig) {
+      cub.sig = sig;
+      this.drawFace(cub, b, hovered);
+    }
+    cub.group.visible = true;
+  }
+
+  /** Paint the button face: soft vertical gradient + rounded edge + label. */
+  private drawFace(cub: Cuboid, b: Btn, hovered: boolean) {
+    const SS = 2; // supersample for crisp text
+    const w = Math.min(1024, Math.max(64, b.w * SS)), h = Math.min(256, Math.max(48, b.h * SS));
+    if (cub.faceCanvas.width !== w || cub.faceCanvas.height !== h) {
+      cub.faceCanvas.width = w; cub.faceCanvas.height = h;
+    }
+    const g = cub.faceCtx;
+    g.clearRect(0, 0, w, h);
+    const acc = this.acc;
+    const grad = g.createLinearGradient(0, 0, 0, h);
+    if (hovered) { grad.addColorStop(0, `rgba(${acc},0.72)`); grad.addColorStop(1, `rgba(${acc},0.42)`); }
+    else if (b.active) { grad.addColorStop(0, `rgba(${acc},0.46)`); grad.addColorStop(1, `rgba(${acc},0.24)`); }
+    else { grad.addColorStop(0, "rgba(52,74,118,0.96)"); grad.addColorStop(1, "rgba(26,38,66,0.96)"); }
+    g.fillStyle = grad;
+    g.beginPath(); g.roundRect(1, 1, w - 2, h - 2, 10 * SS); g.fill();
+    // top sheen + soft edge = "soft cuboid" read without scene lights
+    g.fillStyle = "rgba(255,255,255,0.13)";
+    g.beginPath(); g.roundRect(2 * SS, 2 * SS, w - 4 * SS, h * 0.34, 8 * SS); g.fill();
+    g.strokeStyle = `rgba(${acc},${hovered ? 0.95 : 0.55})`;
+    g.lineWidth = hovered ? 2.4 * SS : 1.6 * SS;
+    g.beginPath(); g.roundRect(1.5, 1.5, w - 3, h - 3, 10 * SS); g.stroke();
+    g.fillStyle = b.dim ? "#8fa3c0" : "#eaf2ff";
+    g.font = `${b.active ? 700 : 600} ${23 * SS * (b.h / 58)}px system-ui`;
+    g.textAlign = "center"; g.textBaseline = "middle";
+    const label = b.label.length > 20 ? b.label.slice(0, 19) + "…" : b.label;
+    g.fillText(label, w / 2, h / 2 + 1 * SS);
+    cub.faceTex.needsUpdate = true;
+    // Body tint follows the face state (darker shade = visible side walls).
+    const bodyMat = cub.body.material as THREE.MeshBasicMaterial;
+    bodyMat.color.set(hovered ? 0x3d5a8c : b.active ? 0x2c4166 : 0x16233c);
+    if (settings.get("layerCinematic")) bodyMat.color.offsetHSL(0.02, 0.08, 0);
+  }
+
+  /** Per-frame cuboid lifecycle: hide stale ids, animate hover/press lift. */
+  private syncCuboids(dt: number) {
+    for (const cub of this.cuboids.values()) {
+      if (!cub.seen) { cub.group.visible = false; continue; }
+      cub.seen = false;
+      const hovered = this.hoverBtn === cub.id;
+      const pressT = this.clockS - cub.pressedAt;
+      const dip = pressT < 0.22 ? -PRESS_DIP * Math.sin((pressT / 0.22) * Math.PI) : 0;
+      const target = cub.baseZ + (hovered ? HOVER_LIFT : 0) + dip;
+      cub.z += (target - cub.z) * Math.min(1, dt * 14);
+      cub.group.position.z = cub.z;
+    }
+  }
+
+  update(dt: number, _t: number) {
     if (!this.mesh.visible) return;
+    this.clockS += dt;
     const g = this.ctx2d;
     const W = this.canvas.width, H = this.canvas.height;
     g.clearRect(0, 0, W, H);
@@ -224,6 +371,7 @@ export class WristPanel implements Updatable {
     else this.renderSettings();
 
     this.tex.needsUpdate = true;
+    this.syncCuboids(dt);
   }
 
   private renderMain() {
@@ -307,5 +455,19 @@ export class WristPanel implements Updatable {
     // A1: simulation-clock time warp (real time ↔ 1 day/s).
     const twShort = ["1× real", "60×", "600×", "1 h/s", "1 day/s"][settings.get("timeWarp")] ?? "1×";
     this.btn({ id: "set:timewarp", label: `Time: ${twShort}`, x: 12, y: 386, w: 488, h: 58 });
+    // #37: grid style segmented control (also enables the grid layer).
+    const gm = settings.get("gridMode");
+    g.fillStyle = "#8fa3c0"; g.font = "600 19px system-ui";
+    g.fillText("GRID STYLE", 18, 478);
+    ["Cartesian", "Spherical", "Cylindrical"].forEach((label, i) => {
+      this.btn({ id: `grid:${i}`, label, x: 12 + i * 166, y: 490, w: 158, h: 52, active: gm === i && settings.get("layerGrid") });
+    });
+    // #52: distance dimming mode.
+    const dm = settings.get("distanceDimming");
+    g.fillStyle = "#8fa3c0"; g.font = "600 19px system-ui";
+    g.fillText("DISTANCE DIMMING", 18, 570);
+    ["None", "Realistic", "Artificial"].forEach((label, i) => {
+      this.btn({ id: `dim:${i}`, label, x: 12 + i * 166, y: 582, w: 158, h: 52, active: dm === i });
+    });
   }
 }

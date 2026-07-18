@@ -143,8 +143,12 @@ function sizedPointsMaterial(maxPx: number): THREE.ShaderMaterial {
       void main() {
         vec2 q = gl_PointCoord - 0.5;
         float r = length(q) * 2.0;
-        float a = exp(-r * r * 4.5) * 0.85;
-        if (a < 0.02) discard;
+        // Soft gaussian that reaches ~0 AT the sprite edge — no discard cliff.
+        // (#49: the old exp(-4.5 r²) + hard discard at a=0.02 left a visible
+        // edge, and at the few-pixel clamp each sprite read as a little square.)
+        float a = exp(-r * r * 5.0) - 0.0067; // exp(-5) at r=1 → 0
+        a = max(a, 0.0) * 0.9;
+        if (a < 0.004) discard;
         gl_FragColor = vec4(vColor * 1.4, a);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -379,13 +383,15 @@ export class TwoMRSLayer {
       const lum = THREE.MathUtils.clamp(1.25 - k / 14, 0.18, 1.0);
       c.copy(base).multiplyScalar(lum);
       col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-      siz[i] = THREE.MathUtils.clamp(distPc * 0.006, 2e4, 1.5e6); // ~constant angular size
+      // ~constant angular size, but big enough that sprites are smooth glows, not
+      // pixel-quantized squares (#49); ±20% jitter breaks the uniform-beads look.
+      siz[i] = THREE.MathUtils.clamp(distPc * 0.012, 2e4, 3e6) * (0.85 + ((i * 2654435761) % 1000) / 1000 * 0.35);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.setAttribute("aColor", new THREE.BufferAttribute(col, 3));
     geo.setAttribute("aSize", new THREE.BufferAttribute(siz, 1));
-    this.points = new THREE.Points(geo, sizedPointsMaterial(8));
+    this.points = new THREE.Points(geo, sizedPointsMaterial(14));
     this.points.frustumCulled = false;
     void meta;
   }

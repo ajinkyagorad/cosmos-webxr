@@ -192,6 +192,24 @@ export class HUD {
       });
       host.appendChild(el);
     };
+    // Segmented 3-way control (#37 grid style, #52 distance dimming).
+    const segmented = (key: keyof SettingsState, label: string, options: string[], alsoEnable?: keyof SettingsState) => {
+      const el = document.createElement("div");
+      el.className = "setting-item";
+      const cur = settings.get(key) as number;
+      el.innerHTML = `<span>${label}</span><span class="seg-group">${options.map((o, i) =>
+        `<button class="seg-btn${i === cur ? " active" : ""}" data-i="${i}">${o}</button>`).join("")}</span>`;
+      el.querySelectorAll<HTMLButtonElement>(".seg-btn").forEach((b) => b.addEventListener("click", () => {
+        const i = parseInt(b.dataset.i!, 10);
+        settings.set(key, i as never);
+        if (alsoEnable) settings.set(alsoEnable, true as never);
+        el.querySelectorAll(".seg-btn").forEach((x) => x.classList.toggle("active", x === b));
+        this.audio.playTick(1200);
+      }));
+      host.appendChild(el);
+    };
+    segmented("gridMode", "Coordinate grid style", ["Cartesian", "Spherical", "Cylindrical"], "layerGrid");
+    segmented("distanceDimming", "Distance dimming", ["None", "Realistic", "Artificial"]);
     bool("vignette", "Comfort vignette (high speed)");
     bool("snapTurn", "Snap turn (VR)");
     bool("seated", "Seated mode (VR)");
