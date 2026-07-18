@@ -19,6 +19,7 @@ export interface AllData {
   starNames: StarNamesData | null;
   constellations: ConstellationData | null;
   landmarks: LandmarkData | null;
+  twoMRS: { meta: BinMeta; buffer: Float32Array } | null;
 }
 
 async function fetchJSON<T>(url: string): Promise<T | null> {
@@ -78,6 +79,10 @@ export async function loadAllData(onProgress?: (msg: string) => void): Promise<A
     fetchJSON<LandmarkData>("/data/landmarks.json"),
     fetchJSON<Manifest>("/data/manifest.json"),
   ]);
+  const [mrsMeta, mrsBuf] = await Promise.all([
+    fetchJSON<BinMeta>("/data/2mrs.meta.json"),
+    fetchBin("/data/2mrs.bin"),
+  ]);
 
   const dust = dustMeta && dustBuf && dustBuf.byteLength >= dustMeta.shape_zyx[0] * dustMeta.shape_zyx[1] * dustMeta.shape_zyx[2]
     ? { meta: dustMeta, buffer: dustBuf } : null;
@@ -85,10 +90,12 @@ export async function loadAllData(onProgress?: (msg: string) => void): Promise<A
     ? { meta: cephMeta, buffer: new Float32Array(cephBuf) } : null;
   const globulars = gcMeta && gcBuf && gcBuf.byteLength >= gcMeta.count * 16
     ? { meta: gcMeta, buffer: new Float32Array(gcBuf) } : null;
+  const twoMRS = mrsMeta && mrsBuf && mrsBuf.byteLength >= mrsMeta.count * 16
+    ? { meta: mrsMeta, buffer: new Float32Array(mrsBuf) } : null;
 
   return {
     stars: { meta: starsMeta ?? { count: 0, layout: "", namedCount: 0, names: [] }, buffer: starsBuffer },
     exoplanets, dso, missions, compact, manifest,
-    dust, cepheids, globulars, galaxies, starNames, constellations, landmarks,
+    dust, cepheids, globulars, galaxies, starNames, constellations, landmarks, twoMRS,
   };
 }

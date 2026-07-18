@@ -351,3 +351,46 @@ export class ConstellationLayer {
     });
   }
 }
+
+
+/* ---------------- 2MRS (Huchra+ 2012): large-scale structure to ~300 Mpc ---------------- */
+
+/**
+ * 2MASS Redshift Survey — 42.7k galaxies with redshift distances (cz/H0,
+ * H0 = 70 km/s/Mpc; peculiar velocities make individual distances approximate
+ * inside ~30 Mpc — see manifest). Equatorial J2000 pc, same convention as the
+ * star catalog. Marker size grows with distance so the cosmic web stays legible
+ * at the ~100 Mpc zoom band; K-band magnitude sets brightness. D17.
+ */
+export class TwoMRSLayer {
+  points: THREE.Points;
+
+  constructor(meta: BinMeta, buf: Float32Array) {
+    const { n, pos } = interleavedToAttributes(buf, 4);
+    const col = new Float32Array(n * 3);
+    const siz = new Float32Array(n);
+    const base = new THREE.Color(0xd9c4a5); // warm pale — old stellar populations
+    const c = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+      const distPc = Math.sqrt(x * x + y * y + z * z);
+      const k = buf[i * 4 + 3];
+      // K-band luminosity proxy: brighter (lower mag) → brighter marker.
+      const lum = THREE.MathUtils.clamp(1.25 - k / 14, 0.18, 1.0);
+      c.copy(base).multiplyScalar(lum);
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      siz[i] = THREE.MathUtils.clamp(distPc * 0.006, 2e4, 1.5e6); // ~constant angular size
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aColor", new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(siz, 1));
+    this.points = new THREE.Points(geo, sizedPointsMaterial(8));
+    this.points.frustumCulled = false;
+    void meta;
+  }
+
+  toSelectables(): Selectable[] {
+    return []; // population layer — selection stays on the named catalogs
+  }
+}

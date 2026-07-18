@@ -15,10 +15,13 @@ import { MissionsLayer } from "./scene/Missions";
 import { CinematicLayer } from "./scene/CinematicLayer";
 import { LabelManager } from "./scene/Labels";
 import { Selection, type Selectable } from "./scene/Selection";
-import { DustVolume, CepheidLayer, GlobularLayer, LocalGroupLayer, ConstellationLayer } from "./scene/AtlasLayers";
+import { DustVolume, CepheidLayer, GlobularLayer, LocalGroupLayer, ConstellationLayer, TwoMRSLayer } from "./scene/AtlasLayers";
 import { StarNameHover } from "./scene/StarNames";
 import { HoverChip } from "./scene/HoverChip";
 import { CoordinateGrid } from "./scene/CoordinateGrid";
+import { CMBLayer, CMB_RADIUS_PC } from "./scene/CMBLayer";
+import { DarkHaloLayer } from "./scene/DarkHaloLayer";
+import { TravelTrails } from "./scene/TravelTrails";
 import { Navigation } from "./controls/Navigation";
 import { DesktopControls } from "./controls/DesktopControls";
 import { XRControls } from "./controls/XRControls";
@@ -98,10 +101,25 @@ async function boot() {
     constellations = new ConstellationLayer(data.constellations);
     app.universe.add(constellations.lines);
   }
+  // 2MRS large-scale structure out to ~300 Mpc (D17).
+  let twoMRS: TwoMRSLayer | null = null;
+  if (data.twoMRS) {
+    twoMRS = new TwoMRSLayer(data.twoMRS.meta, data.twoMRS.buffer);
+    app.universe.add(twoMRS.points);
+  }
 
   // ---------- cylindrical coordinate grid (C7; toggle, default OFF) ----------
   const grid = new CoordinateGrid();
   app.universe.add(grid.group);
+
+  // ---------- cosmology layers: CMB shell (D13) + NFW dark-matter halo (D14) ----------
+  const cmb = new CMBLayer();
+  app.universe.add(cmb.mesh);
+  app.addUpdatable(cmb);
+  const darkHalo = new DarkHaloLayer(app);
+  app.universe.add(darkHalo.mesh);
+  app.universe.add(darkHalo.labelAnchor);
+  app.addUpdatable(darkHalo);
 
   // ---------- labels (world-space, constant angular size, per-label zoom windows) ----------
   const labels = new LabelManager(app);
@@ -167,6 +185,16 @@ async function boot() {
       labelQueue.push(labels.add(g.name, anchor, { size: 25, color: "#d8c9ff", minLog: -7.3, maxLog: -3.0 }));
     }
   }
+  // Cosmology labels (D13/D14).
+  labelQueue.push(labels.add("Dark matter halo (NFW model)", darkHalo.labelAnchor,
+    { size: 60, color: "#9a86ff", minLog: -6, maxLog: -2.6, when: () => settings.get("layerDarkHalo") }));
+  {
+    const cmbAnchor = new THREE.Object3D();
+    cmbAnchor.position.set(0, 0, -CMB_RADIUS_PC * 0.95);
+    app.universe.add(cmbAnchor);
+    labelQueue.push(labels.add("Cosmic microwave background · 46.5 Gly", cmbAnchor,
+      { size: 4e8, color: "#7db4ff", minLog: -7.3, maxLog: -1.6, when: () => settings.get("layerCMB") }));
+  }
   // Landmark labels (local clouds / Milky Way / Local Group), each in its zoom window.
   const LANDMARK_LABEL: Record<string, { size: number; color: string; minLog: number; maxLog: number }> = {
     cloud: { size: 4, color: "#ff9a3c", minLog: -4.7, maxLog: 1.2 },
@@ -218,6 +246,32 @@ async function boot() {
       distPC: Math.hypot(lm.pos[0], lm.pos[1], lm.pos[2]),
     });
   }
+  // Cosmology destinations (D13/D14): the CMB shell is real and mapped; dark
+  // energy is uniform (~68% of the energy density) — there is no map, so the
+  // entry is an info note that frames the observable universe instead.
+  for (const cosmo of [
+    {
+      name: "Cosmic microwave background (46.5 Gly)",
+      desc: "Afterglow of the Big Bang, 380 000 years after the hot beginning. " +
+        "Real NASA/WMAP 9-year map on a shell at 46.5 Gly comoving — the edge of the observable universe.",
+    },
+    {
+      name: "Dark energy — uniform, no map",
+      desc: "≈68% of the universe's energy density, driving the uniform accelerated expansion. " +
+        "It is the same everywhere, so there is no map — this frame shows the observable universe it expands.",
+    },
+  ]) {
+    const sel: Selectable = {
+      id: `cosmo-${cosmo.name}`,
+      name: cosmo.name,
+      kind: "landmark",
+      position: new THREE.Vector3(0, 0, -CMB_RADIUS_PC * 0.95),
+      radiusWorld: 5e9, // overview framing (clamps to LOG_MIN)
+      describe: () => `<b>${cosmo.name}</b><br>${cosmo.desc}<br><span class="dim">Planck/WMAP cosmology (see manifest)</span>`,
+    };
+    selection.registerMany([sel]);
+    landmarkDests.push({ name: cosmo.name, cat: "COSMOLOGY", sel, distPC: CMB_RADIUS_PC });
+  }
   // Named stars as selectables (top 400).
   data.stars.meta.names.forEach((n) => {
     const i = n.i, b = data.stars.buffer;
@@ -237,6 +291,11 @@ async function boot() {
   // ---------- navigation & effects ----------
   const nav = new Navigation(app);
   app.addUpdatable(nav);
+  cmb.getLog = () => nav.logScale;
+  // Travel trails (D15): fading speed-colored ribbon of the actual flight path.
+  const trails = new TravelTrails(app, nav);
+  app.scene.add(trails.group);
+  app.addUpdatable(trails);
   // (No fake warp particles: travel eases the real universe transform past the user.)
 
   // Star-name hover tags (desktop look ray / XR controller ray — provider wired below).
@@ -400,12 +459,15 @@ async function boot() {
     if (globulars) globulars.points.visible = settings.get("layerGlobulars");
     if (localGroup) localGroup.points.visible = settings.get("layerGalaxies");
     if (constellations) constellations.lines.visible = settings.get("layerConstellations");
+    if (twoMRS) twoMRS.points.visible = settings.get("layer2MRS");
     // Skybox: toggleable everywhere; hidden by default in passthrough AR (no "bubble").
     milkyWay.sky.visible = settings.get("layerSkybox") && app.mode !== "ar";
     labels.setVisible(settings.get("labels"));
     // C7 grid / C11 galaxy boost / D16 cinematic accent theme.
     grid.group.visible = settings.get("layerGrid");
     if (localGroup) localGroup.setBoost(settings.get("galaxyBoost"));
+    cmb.enabled = settings.get("layerCMB");
+    darkHalo.mesh.visible = settings.get("layerDarkHalo");
     document.body.classList.toggle("cinematic-theme", settings.get("layerCinematic"));
   };
   settings.onChange(() => applyLayers());

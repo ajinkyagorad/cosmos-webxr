@@ -26,6 +26,13 @@ const LAYER_KEYS: { key: string; label: string }[] = [
   { key: "layerMissions", label: "Missions" },
   { key: "layerCompact", label: "BH/Pulsars" },
   { key: "layerSkybox", label: "Skybox" },
+  { key: "layerCMB", label: "CMB shell" },
+  { key: "layerDarkHalo", label: "DM halo" },
+  { key: "layerGrid", label: "Coord grid" },
+  { key: "galaxyBoost", label: "Galaxy boost" },
+  { key: "layer2MRS", label: "2MRS" },
+  { key: "hoverLabels", label: "Hover labels" },
+  { key: "trails", label: "Trails" },
   { key: "layerCinematic", label: "✦ Cinematic" },
 ];
 
@@ -136,6 +143,7 @@ export class WristPanel implements Updatable {
       case "set:vignette": settings.toggle("vignette"); break;
       case "set:snapTurn": settings.toggle("snapTurn"); break;
       case "set:music": settings.toggle("ambientMusic"); break;
+      case "set:timewarp": settings.set("timeWarp", (settings.get("timeWarp") + 1) % 5); break;
       case "vol:-1": settings.set("masterVolume", Math.max(0, settings.get("masterVolume") - 0.1)); break;
       case "vol:1": settings.set("masterVolume", Math.min(1, settings.get("masterVolume") + 0.1)); break;
       case "elev:-1": settings.set("elevationExaggeration", Math.max(0, settings.get("elevationExaggeration") - 1)); break;
@@ -156,12 +164,16 @@ export class WristPanel implements Updatable {
 
   /* ------------------------------ rendering ------------------------------ */
 
+  /** D16: accent follows the cinematic theme (red-orange) or default (blue). */
+  private get acc(): string { return settings.get("layerCinematic") ? "255,106,53" : "125,180,255"; }
+  private get accHex(): string { return settings.get("layerCinematic") ? "#ff7a3c" : "#7db4ff"; }
+
   private btn(b: Btn) {
     const g = this.ctx2d;
-    g.fillStyle = this.hoverBtn === b.id ? "rgba(125,180,255,0.55)"
-      : b.active ? "rgba(125,180,255,0.30)" : "rgba(30,45,75,0.85)";
+    g.fillStyle = this.hoverBtn === b.id ? `rgba(${this.acc},0.55)`
+      : b.active ? `rgba(${this.acc},0.30)` : "rgba(30,45,75,0.85)";
     g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 10); g.fill();
-    g.strokeStyle = "rgba(125,180,255,0.6)"; g.lineWidth = 2; g.stroke();
+    g.strokeStyle = `rgba(${this.acc},0.6)`; g.lineWidth = 2; g.stroke();
     g.fillStyle = b.dim ? "#8fa3c0" : "#eaf2ff";
     g.font = "600 23px system-ui";
     g.textAlign = "center";
@@ -178,7 +190,7 @@ export class WristPanel implements Updatable {
     g.clearRect(0, 0, W, H);
     g.fillStyle = "rgba(8,14,28,0.9)";
     g.beginPath(); g.roundRect(0, 0, W, H, 22); g.fill();
-    g.strokeStyle = "rgba(125,180,255,0.5)"; g.lineWidth = 2; g.stroke();
+    g.strokeStyle = `rgba(${this.acc},0.5)`; g.lineWidth = 2; g.stroke();
     this.buttons = [];
 
     // Tab bar
@@ -208,7 +220,7 @@ export class WristPanel implements Updatable {
 
     g.fillStyle = "#8fa3c0"; g.font = "600 20px system-ui";
     g.fillText("TARGET", 18, 200);
-    g.fillStyle = "#7db4ff"; g.font = "700 30px system-ui";
+    g.fillStyle = this.accHex; g.font = "700 30px system-ui";
     const tname = this.selection.target ? this.selection.target.name : "—";
     g.fillText(tname.length > 20 ? tname.slice(0, 19) + "…" : tname, 18, 234);
     if (this.selection.target) {
@@ -251,7 +263,7 @@ export class WristPanel implements Updatable {
       const col = i % 2, row = Math.floor(i / 2);
       this.btn({
         id: `layer:${l.key}`, label: l.label,
-        x: 12 + col * 250, y: 100 + row * 66, w: 238, h: 58,
+        x: 12 + col * 250, y: 92 + row * 50, w: 238, h: 44,
         active: settings.get(l.key as never) as boolean,
       });
     });
@@ -273,5 +285,8 @@ export class WristPanel implements Updatable {
     const size = settings.get("planetSizeExaggeration").toFixed(0);
     this.btn({ id: "size:-1", label: "Planet size −", x: 12, y: 316, w: 238, h: 58 });
     this.btn({ id: "size:1", label: `Size + (${size}×)`, x: 262, y: 316, w: 238, h: 58 });
+    // A1: simulation-clock time warp (real time ↔ 1 day/s).
+    const twShort = ["1× real", "60×", "600×", "1 h/s", "1 day/s"][settings.get("timeWarp")] ?? "1×";
+    this.btn({ id: "set:timewarp", label: `Time: ${twShort}`, x: 12, y: 386, w: 488, h: 58 });
   }
 }

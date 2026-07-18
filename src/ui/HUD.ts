@@ -3,7 +3,7 @@ import * as THREE from "three";
 import type { App } from "../core/App";
 import type { Navigation } from "../controls/Navigation";
 import type { Selection, Selectable } from "../scene/Selection";
-import { settings, type SettingsState } from "../ui/Settings";
+import { settings, TIME_RATES, TIME_RATE_LABELS, type SettingsState } from "../ui/Settings";
 import { formatSpeed, formatDistancePC, esc } from "../util/astro";
 import type { AudioEngine } from "../audio/AudioEngine";
 
@@ -135,8 +135,15 @@ export class HUD {
       { key: "layerMissions", label: "Missions & probes" },
       { key: "layerCompact", label: "Black holes & neutron stars" },
       { key: "layerSkybox", label: "Sky backdrop (Gaia all-sky)" },
+      { key: "layerCMB", label: "CMB shell (WMAP 9yr, 46.5 Gly)" },
+      { key: "layerDarkHalo", label: "Dark matter halo (NFW model)" },
+      { key: "layerGrid", label: "Coordinate grid (AU/ly/kpc)" },
+      { key: "galaxyBoost", label: "Galaxy boost (visibility floor)" },
+      { key: "layer2MRS", label: "2MRS galaxies (~300 Mpc)" },
       { key: "layerCinematic", label: "✦ Cinematic universes (fiction)" },
       { key: "labels", label: "Labels" },
+      { key: "hoverLabels", label: "Hover labels (pointer dwell)" },
+      { key: "trails", label: "Travel trails" },
       { key: "starNames", label: "Star names on hover" },
       { key: "orbits", label: "Orbit lines" },
     ];
@@ -183,6 +190,7 @@ export class HUD {
     bool("snapTurn", "Snap turn (VR)");
     bool("seated", "Seated mode (VR)");
     range("turnSpeed", "Turn speed", 30, 180, 5, (v) => `${v}°/s`);
+    range("timeWarp", "Time warp (simulation clock)", 0, TIME_RATES.length - 1, 1, (v) => TIME_RATE_LABELS[Math.round(v)]);
     range("planetSizeExaggeration", "Planet size exaggeration", 50, 3000, 50, (v) => `${v}×`);
     range("orbitExaggeration", "Orbit distance exaggeration", 0.25, 4, 0.05, (v) => `${v.toFixed(2)}×`);
     range("elevationExaggeration", "Terrain elevation exaggeration", 0, 10, 0.5, (v) => `${v.toFixed(1)}×`);

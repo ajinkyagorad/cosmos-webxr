@@ -1,0 +1,13 @@
+{
+  "count": 42724,
+  "stride": 4,
+  "fields": [
+    "x_pc",
+    "y_pc",
+    "z_pc",
+    "Ktmag"
+  ],
+  "maxDistMpc": 300.0,
+  "h0": 70.0,
+  "source": "2MRS (Huchra+ 2012, J/ApJS/199/26 table3) via VizieR asu-tsv"
+}

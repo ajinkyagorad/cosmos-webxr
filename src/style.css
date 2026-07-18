@@ -8,6 +8,20 @@
   --text: #dce7f7;
   --dim: #8fa3c0;
 }
+/* D16 cinematic theme: red-orange hot accents on landing + HUD/panels.
+   Toggled on <body> when the cinematic layer is enabled. */
+body.cinematic-theme {
+  --accent: #ff6a35;
+  --accent2: #ffb347;
+  --line: rgba(255, 122, 60, 0.30);
+}
+body.cinematic-theme .title {
+  background: linear-gradient(180deg, #fff0e0 20%, #ff6a35 70%, #b3221b);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 0 60px rgba(255, 106, 53, 0.35);
+}
+body.cinematic-theme .hud-btn.active { background: rgba(255, 106, 53, 0.25); }
+body.cinematic-theme .loader-ring { border-color: rgba(255, 106, 53, 0.15); border-top-color: var(--accent); }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
 body {

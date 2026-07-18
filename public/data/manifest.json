@@ -186,6 +186,26 @@
       "sizeBytes": 3272481,
       "note": "uint8 log-encoded density cube kept in galactic Cartesian; mounted under a rotated group in-app",
       "license": "Leike & Ensslin 2020 / Lallement et al. dust maps — cite the underlying papers"
+    },
+    {
+      "name": "CMB all-sky map (WMAP 9-year ILC)",
+      "source": "NASA/WMAP Science Team via Wikimedia Commons (File:WMAP 2012.png)",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/ed/WMAP_2012.png",
+      "retrieved": "2026-07-18",
+      "count": 1,
+      "sizeBytes": 608108,
+      "note": "Mollweide 4096x2048 reprojected to 2048x1024 equirectangular offline (scripts/fetch_cmb.py); magic bytes verified; mounted on a 46.5 Gly shell. sci.esa.int Planck equirectangular JPEG returned 404 (removed from scicms), so WMAP 9yr is the reachable real map.",
+      "license": "NASA public domain (NASA imagery policy), credit NASA/WMAP Science Team"
+    },
+    {
+      "name": "2MRS galaxy redshift catalog (Huchra+ 2012)",
+      "source": "CDS VizieR J/ApJS/199/26 table3 via asu-tsv endpoint",
+      "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=J/ApJS/199/26/table3",
+      "retrieved": "2026-07-18",
+      "count": 42724,
+      "sizeBytes": 683584,
+      "note": "galaxies with cz in (35, 21000) km/s -> 0.5-300 Mpc at H0=70; peculiar velocities make individual cz distances approximate inside ~30 Mpc; blueshifted/nearby galaxies (M31 etc.) are covered by the LVDB Local Group layer instead. tdc-www.cfa.harvard.edu 2mrs mirror 404s; cdsarc direct FTP is bot-gated, so the VizieR TSV endpoint was used.",
+      "license": "CDS VizieR data usage policy; cite Huchra+ 2012, ApJS 199, 26 (doi:10.26093/cds/vizier.21990026)"
     }
   ]
 }
