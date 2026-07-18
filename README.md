@@ -33,18 +33,15 @@ npm run preview    # serve the production build locally
 Deploy `dist/` to any static host (GitHub Pages, Netlify, Vercel, Cloudflare Pages…).
 The app is fully static: all datasets and textures live under `public/` and are copied verbatim.
 
-### Cloudflare Pages (one command)
+### Cloudflare Pages (push-to-deploy)
 
-The repo includes `wrangler.toml` (`pages_build_output_dir = "dist"`). With
-[wrangler](https://developers.cloudflare.com/workers/wrangler/) authenticated
-(`npx wrangler login` once):
+The `main` branch is connected to Cloudflare Pages: **every `git push` triggers an
+automatic build** (`npm run build` → `dist/`) and deploys to
+[cosmos-webxr.pages.dev](https://cosmos-webxr.pages.dev). Pull requests get preview
+deployments automatically.
 
-```bash
-npm run deploy     # builds dist/ and deploys to Cloudflare Pages
-```
-
-Or connect the GitHub repo in the Cloudflare dashboard (Pages → Connect to Git)
-with build command `npm run build` and output directory `dist` for push-to-deploy CI.
+For a manual emergency deploy you can still run `npm run deploy` (wrangler direct
+upload, requires `npx wrangler login` once).
 
 Deep links: `?mode=desktop|vr|ar` skips the landing screen (VR/AR still needs a headset).
 
